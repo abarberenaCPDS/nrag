@@ -1,0 +1,788 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+This module contains the logic for query decomposition.
+"""
+
+import logging
+from typing import Any
+
+from langchain_core.documents import Document
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_nvidia_ai_endpoints import ChatNVIDIA, NVIDIAEmbeddings, NVIDIARerank
+from opentelemetry import context as otel_context
+
+from nvidia_rag.rag_server.response_generator import (
+    ErrorCodeMapping,
+    RAGResponse,
+    generate_answer_async,
+)
+from nvidia_rag.utils.common import (
+    filter_documents_by_confidence,
+    release_nvidia_client_response,
+)
+from nvidia_rag.utils.configuration import NvidiaRAGConfig
+from nvidia_rag.utils.llm import get_llm, get_prompts
+from nvidia_rag.utils.vdb.vdb_base import VDBRag
+
+# Configure logger
+logger = logging.getLogger(__name__)
+
+# While merging the context, documents should be limited to this number to avoid llm
+# TODO: configure this from config
+MAX_DOCUMENTS_FOR_GENERATION = 20
+
+
+def format_conversation_history(history: list[tuple[str, str]]) -> str:
+    """
+    Format conversation history into a readable string.
+
+    Args:
+        history: List of (question, answer) tuples
+
+    Returns:
+        Formatted conversation history string
+    """
+    formatted = "\n\n\n".join(
+        [f"Question: {question}\nAnswer: {answer}" for question, answer in history]
+    )
+    logger.debug(f"Formatted conversation history with {len(history)} entries")
+    return formatted
+
+
+def normalize_relevance_scores(
+    documents: list[Document],
+    filter_docs: bool = True,
+    confidence_threshold: float | None = None,
+    config: NvidiaRAGConfig | None = None,
+) -> list[Document]:
+    """
+    Normalize relevance scores in a list of documents to be between 0 and 1 using sigmoid function.
+
+    Args:
+        documents: List of Document objects with relevance_score in metadata
+        filter_docs: Whether to filter documents
+        confidence_threshold: Confidence threshold for filtering
+        config: NvidiaRAGConfig instance. If None, creates a new one.
+
+    Returns:
+        The same list of documents with normalized scores (top 3)
+    """
+    if config is None:
+        config = NvidiaRAGConfig()
+
+    if confidence_threshold is None:
+        confidence_threshold = config.default_confidence_threshold
+
+    import math
+
+    if not documents:
+        logger.debug("No documents provided for normalization")
+        return documents
+
+    logger.debug(f"Normalizing relevance scores for {len(documents)} documents")
+
+    # Apply sigmoid normalization (1 / (1 + e^-x))
+    for doc in documents:
+        if "relevance_score" in doc.metadata:
+            original_score = doc.metadata["relevance_score"]
+            scaled_score = original_score * 0.1
+            normalized_score = 1 / (1 + math.exp(-scaled_score))
+            doc.metadata["relevance_score"] = normalized_score
+            logger.debug(f"Normalized score: {original_score} -> {normalized_score}")
+
+    if filter_docs:
+        # Sort documents by normalized relevance_score in descending order and return top 3
+        documents = sorted(
+            documents,
+            key=lambda doc: doc.metadata.get("relevance_score", 0),
+            reverse=True,
+        )[:3]
+
+    if confidence_threshold > 0.0:
+        documents = filter_documents_by_confidence(documents, confidence_threshold)
+
+    return documents
+
+
+def merge_contexts(
+    query: str,
+    contexts: list[Document] = None,
+    sub_query_contexts: dict[str, Any] = None,
+    max_documents: int = MAX_DOCUMENTS_FOR_GENERATION,
+    reranker: NVIDIARerank | None = None,
+    filter_docs: bool = True,
+) -> list[Document]:
+    """
+    Merge multiple contexts into a single context.
+    """
+    contexts = [] if contexts is None else contexts
+    sub_query_contexts = {} if sub_query_contexts is None else sub_query_contexts
+
+    all_contexts = []
+    all_contexts.extend(contexts)
+    for sub_query in sub_query_contexts:
+        all_contexts.extend(sub_query_contexts[sub_query]["context"])
+
+    # Remove duplicates based on page_content
+    seen_contents = set()
+    unique_contexts = []
+
+    for doc in all_contexts:
+        if doc.page_content not in seen_contents:
+            seen_contents.add(doc.page_content)
+            unique_contexts.append(doc)
+
+    all_contexts = unique_contexts
+
+    if filter_docs and reranker:
+        reranker.top_n = max_documents
+        try:
+            all_contexts = reranker.compress_documents(
+                query=query, documents=all_contexts
+            )
+        finally:
+            release_nvidia_client_response(reranker)
+        all_contexts = normalize_relevance_scores(all_contexts, filter_docs=False)
+
+    return all_contexts
+
+
+async def generate_subqueries(
+    query: str, llm: ChatNVIDIA, prompts: dict | None = None
+) -> list[str]:
+    """
+    Generate multiple perspectives/subqueries from the original query.
+
+    Args:
+        query: Original query string
+        llm: Language model instance
+        prompts: Optional prompts dictionary
+
+    Returns:
+        List of generated subqueries
+    """
+    prompts = prompts or get_prompts()
+    template = prompts.get("query_decomposition_multiquery_prompt")
+    prompt_perspectives = ChatPromptTemplate.from_messages(
+        [
+            ("system", template.get("system")),
+            ("human", template.get("human")),
+        ]
+    )
+
+    def _parse_subqueries(text: str) -> list[str]:
+        prefixed, unprefixed = [], []
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # Strip numbered prefix: "1. ", "2) ", etc.
+            if len(line) >= 3 and line[0].isdigit() and line[1] in ".)" and line[2] == " ":
+                prefixed.append(line[3:].strip())
+            # Strip bullet prefix: "- ", "* "
+            elif line[:2] in ("- ", "* "):
+                prefixed.append(line[2:].strip())
+            else:
+                unprefixed.append(line)
+        # Prefer prefixed lines (numbered/bulleted list); fall back to all lines
+        # if the LLM returned a single unprefixed query
+        return [q for q in prefixed if q] or [q for q in unprefixed if q]
+
+    generate_queries = (
+        prompt_perspectives
+        | llm
+        | StrOutputParser()
+        | _parse_subqueries
+    )
+
+    questions = await generate_queries.ainvoke(
+        {"question": query}, config={"run_name": "sub-queries-generation"}
+    )
+    logger.info(f"Generated {len(questions)} subqueries from original query")
+    logger.info(f"Subqueries: {questions}")
+
+    return questions
+
+
+async def rewrite_query_with_context(
+    question: str,
+    history: list[tuple[str, str]],
+    llm: ChatNVIDIA,
+    prompts: dict | None = None,
+) -> str:
+    """
+    Rewrite a query based on conversation history.
+
+    Args:
+        question: Original question
+        history: Conversation history
+        llm: Language model instance
+        prompts: Optional prompts dictionary
+
+    Returns:
+        Rewritten query string
+    """
+    if not history:
+        logger.debug("No history available, returning original question")
+        return question
+
+    prompts = prompts or get_prompts()
+
+    query_rewriter_prompt = prompts.get("query_decompositions_query_rewriter_prompt")
+    query_rewriter = ChatPromptTemplate.from_messages(
+        [
+            ("system", query_rewriter_prompt.get("system")),
+            ("human", query_rewriter_prompt.get("human")),
+        ]
+    )
+
+    query_rewriter_chain = query_rewriter | llm | StrOutputParser()
+
+    # Format the conversation history
+    formatted_history = format_conversation_history(history)
+
+    # Prepare the input for the chain
+    chain_input = {
+        "conversation_history": formatted_history,
+        "question": question,
+    }
+
+    rewritten_query = await query_rewriter_chain.ainvoke(
+        chain_input, config={"run_name": "contextual-query-rewriting"}
+    )
+
+    logger.info(f"Query rewritten: '{question}' -> '{rewritten_query}'")
+    return rewritten_query.strip()
+
+
+def retrieve_and_rank_documents(
+    query: str,
+    original_query: str,
+    vdb_op: VDBRag,
+    ranker: NVIDIARerank | None,
+    collection_name: str | None = None,
+    top_k: int | None = None,
+    ranker_top_k: int | None = None,
+    config: NvidiaRAGConfig | None = None,
+) -> list[Document]:
+    """
+    Retrieve and optionally rerank documents for a query.
+
+    Args:
+        query: Query to retrieve documents for
+        original_query: Original user query for reranking
+        vdb_op: vectorstore object
+        ranker: Optional document ranker instance
+        collection_name: Collection name to query
+        top_k: Number of documents to retrieve
+        ranker_top_k: Number of documents to return after reranking
+        config: NvidiaRAGConfig instance. If None, creates a new one.
+
+    Returns:
+        List of retrieved and ranked documents
+    """
+    if config is None:
+        config = NvidiaRAGConfig()
+
+    # Apply defaults from config
+    if collection_name is None:
+        collection_name = config.vector_store.default_collection_name
+    if top_k is None:
+        top_k = config.retriever.top_k
+    if ranker_top_k is None:
+        ranker_top_k = config.retriever.top_k
+
+    otel_ctx = otel_context.get_current()
+    retrieved_docs = vdb_op.retrieval_langchain(
+        query=query,
+        collection_name=collection_name,
+        top_k=top_k,
+        otel_ctx=otel_ctx,
+    )
+    logger.info(f"Retrieved {len(retrieved_docs)} documents for query")
+
+    if ranker and retrieved_docs:
+        ranker.top_n = ranker_top_k
+        try:
+            retrieved_docs = ranker.compress_documents(
+                query=original_query, documents=retrieved_docs
+            )
+        finally:
+            release_nvidia_client_response(ranker)
+        logger.info(f"Reranked to {len(retrieved_docs)} documents")
+
+    return retrieved_docs
+
+
+async def generate_answer_for_query(
+    question: str,
+    documents: list[Document],
+    llm: ChatNVIDIA,
+    prompts: dict | None = None,
+) -> str:
+    """
+    Generate an answer for a specific question using retrieved documents.
+
+    Args:
+        question: Question to answer
+        documents: Retrieved documents as context
+        llm: Language model instance
+        prompts: Optional prompts dictionary
+
+    Returns:
+        Generated answer string
+    """
+    prompts = prompts or get_prompts()
+
+    rag_template = prompts.get("query_decomposition_rag_template")
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", rag_template.get("system")),
+            ("human", rag_template.get("human")),
+        ]
+    )
+    rag_chain = prompt | llm | StrOutputParser()
+
+    answer = await rag_chain.ainvoke(
+        {"question": question, "context": documents},
+        config={"run_name": "sub-query-answer-generation"},
+    )
+    logger.info(f"Generated answer for question: '{question[:50]}...'")
+
+    return answer.strip()
+
+
+async def generate_followup_question(
+    history: list[tuple[str, str]],
+    original_query: str,
+    contexts: dict[str, Any],
+    llm: ChatNVIDIA,
+    prompts: dict | None = None,
+) -> str:
+    """
+    Generate a follow-up question based on conversation history and context.
+
+    Args:
+        history: Conversation history
+        original_query: Original user query
+        contexts: Subquery context dict mapping subquery -> {context, answer, rewritten_query}
+        llm: Language model instance
+        prompts: Optional prompts dictionary
+
+    Returns:
+        Follow-up question string (empty if no follow-up needed)
+    """
+    prompts = prompts or get_prompts()
+
+    followup_question_prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                prompts.get("query_decomposition_followup_question_prompt").get(
+                    "system"
+                ),
+            ),
+            (
+                "human",
+                prompts.get("query_decomposition_followup_question_prompt").get(
+                    "human"
+                ),
+            ),
+        ]
+    )
+
+    # Format contexts as readable text: extract page_content from retrieved docs
+    context_parts = []
+    for subquery, data in contexts.items():
+        docs = data.get("context", [])
+        doc_texts = "\n".join(doc.page_content for doc in docs if doc.page_content)
+        if doc_texts:
+            context_parts.append(f"[{subquery}]\n{doc_texts}")
+    formatted_context = "\n\n".join(context_parts) if context_parts else ""
+
+    followup_question_chain = followup_question_prompt | llm | StrOutputParser()
+    followup_question = await followup_question_chain.ainvoke(
+        {
+            "conversation_history": format_conversation_history(history),
+            "question": original_query,
+            "context": formatted_context,
+        },
+        config={"run_name": "follow-up-question-generation"},
+    )
+
+    # Clean up the follow-up question
+    cleaned_followup = followup_question.strip().replace("'", "").replace('"', "")
+
+    if cleaned_followup:
+        logger.info(f"Generated follow-up question: {cleaned_followup}")
+    else:
+        logger.info("No follow-up question needed")
+
+    return cleaned_followup if cleaned_followup else ""
+
+
+async def process_subqueries(
+    questions: list[str],
+    original_query: str,
+    llm: ChatNVIDIA,
+    vdb_op: VDBRag,
+    ranker: NVIDIARerank | None,
+    collection_name: str | None = None,
+    top_k: int | None = None,
+    ranker_top_k: int | None = None,
+    confidence_threshold: float | None = None,
+    history: list[tuple[str, str]] | None = None,
+    config: NvidiaRAGConfig | None = None,
+    prompts: dict | None = None,
+) -> tuple[list[tuple[str, str]], list[Document]]:
+    """
+    Process a list of subqueries and return conversation history and contexts.
+
+    Args:
+        questions: List of questions to process
+        original_query: Original user query
+        llm: Language model instance
+        vdb_op: vectorstore object
+        collection_name: Collection name to query
+        top_k: Number of documents to retrieve
+        ranker_top_k: Number of documents to return after reranking
+        confidence_threshold: Confidence threshold for filtering
+        history: Conversation history
+        config: NvidiaRAGConfig instance. If None, creates a new one.
+        ranker: Optional document ranker
+        prompts: Optional prompts dictionary
+
+    Returns:
+        Tuple of (conversation_history, final_contexts)
+    """
+    if config is None:
+        config = NvidiaRAGConfig()
+
+    # Apply defaults from config
+    if collection_name is None:
+        collection_name = config.vector_store.default_collection_name
+    if top_k is None:
+        top_k = config.retriever.top_k
+    if ranker_top_k is None:
+        ranker_top_k = config.retriever.top_k
+    if confidence_threshold is None:
+        confidence_threshold = config.default_confidence_threshold
+
+    if history is None:
+        history = []
+
+    final_contexts = {}
+
+    for i, question in enumerate(questions):
+        logger.info(f"Processing question {i + 1}/{len(questions)}: {question}")
+
+        # Rewrite query with context from previous answers
+        rewritten_query = await rewrite_query_with_context(
+            question, history, llm, prompts=prompts
+        )
+        logger.info(f"Rewritten query: {rewritten_query}")
+
+        # Retrieve and rank documents
+        retrieved_docs = retrieve_and_rank_documents(
+            rewritten_query,
+            original_query,
+            vdb_op,
+            ranker,
+            collection_name,
+            top_k,
+            ranker_top_k,
+            config,
+        )
+
+        final_contexts[question] = {
+            "context": retrieved_docs,
+            "rewritten_query": rewritten_query,
+        }
+
+        # # Add normalized documents to final contexts
+        # if ranker and retrieved_docs:
+        #     final_contexts.extend(
+        #         normalize_relevance_scores(
+        #             retrieved_docs, confidence_threshold=confidence_threshold
+        #         )
+        #     )
+
+        # Generate answer
+        answer = await generate_answer_for_query(
+            rewritten_query, retrieved_docs, llm, prompts=prompts
+        )
+        logger.info(f"Generated answer: {answer}")
+        final_contexts[question]["answer"] = answer
+
+        history.append((question, answer))
+
+    logger.info(
+        f"Processed {len(questions)} subqueries, collected {len(final_contexts)} contexts"
+    )
+    return history, final_contexts
+
+
+async def generate_final_response(
+    history: list[tuple[str, str]],
+    contexts: list[Document],
+    original_query: str,
+    llm: ChatNVIDIA,
+    enable_citations: bool = True,
+    collection_name: str = "",
+    prompts: dict | None = None,
+):
+    """
+    Generate the final comprehensive response.
+
+    Args:
+        history: Conversation history
+        contexts: Final contexts
+        original_query: Original user query
+        llm: Language model instance
+        prompts: Optional prompts dictionary
+
+    Returns:
+        Generated response stream
+    """
+    prompts = prompts or get_prompts()
+
+    final_response_prompt = prompts.get("query_decomposition_final_response_prompt")
+    final_response_generator = ChatPromptTemplate.from_messages(
+        [
+            ("system", final_response_prompt.get("system")),
+            ("human", final_response_prompt.get("human")),
+        ]
+    )
+
+    final_response_chain = final_response_generator | llm | StrOutputParser()
+
+    logger.info("Generating final comprehensive response")
+
+    return RAGResponse(
+        generate_answer_async(
+            final_response_chain.astream(
+                {
+                    "conversation_history": format_conversation_history(history),
+                    "context": f"{contexts}",
+                    "question": original_query,
+                },
+                config={"run_name": "final-response-generation"},
+            ),
+            contexts=contexts,
+            model=llm.model,
+            collection_name=collection_name,
+            enable_citations=enable_citations,
+        ),
+        status_code=ErrorCodeMapping.SUCCESS,
+    )
+
+
+async def iterative_query_decomposition(
+    query: str,
+    history: list[tuple[str, str]],
+    llm: ChatNVIDIA,
+    vdb_op: VDBRag,
+    ranker: NVIDIARerank | None = None,
+    recursion_depth: int | None = None,
+    enable_citations: bool = True,
+    collection_name: str | None = None,
+    top_k: int | None = None,
+    ranker_top_k: int | None = None,
+    confidence_threshold: float | None = None,
+    llm_settings: dict[str, Any] | None = None,
+    config: NvidiaRAGConfig | None = None,
+    prompts: dict | None = None,
+):
+    """
+    Decompose a complex query into simpler subqueries and generate a comprehensive answer.
+
+    Args:
+        query: User's question
+        history: Conversation history
+        llm: Language model instance
+        vdb_op: Vector database operation instance
+        ranker: Optional document ranker
+        recursion_depth: Recursion depth for query decomposition
+        enable_citations: Whether to enable citations
+        collection_name: Collection name to query
+        top_k: Number of documents to retrieve
+        ranker_top_k: Number of documents to return after reranking
+        confidence_threshold: Confidence threshold for filtering
+        llm_settings: LLM settings
+        config: NvidiaRAGConfig instance. If None, creates a new one.
+        prompts: Optional prompts dictionary
+
+    This function breaks down complex queries into manageable subqueries, processes them
+    iteratively with context awareness, and generates a final comprehensive response.
+
+    Returns:
+        Generated comprehensive answer stream
+
+    Raises:
+        ValueError: If no vectorstore object is provided
+    """
+    if config is None:
+        config = NvidiaRAGConfig()
+
+    # Apply defaults from config
+    if recursion_depth is None:
+        recursion_depth = config.query_decomposition.recursion_depth
+    if collection_name is None:
+        collection_name = config.vector_store.default_collection_name
+    if top_k is None:
+        top_k = config.retriever.top_k
+    if ranker_top_k is None:
+        ranker_top_k = config.retriever.top_k
+    if confidence_threshold is None:
+        confidence_threshold = config.default_confidence_threshold
+
+    logger.info(f"Starting query decomposition for: '{query[:100]}...'")
+
+    if not vdb_op:
+        logger.error("No retriever provided")
+        raise ValueError("At least one retriever must be provided")
+
+    logger.debug(f"Using retriever: {type(vdb_op).__name__}")
+
+    if llm_settings is None:
+        llm_settings = {}
+
+    logger.info(
+        "Initializing LLM for query decomposition: %s at %s",
+        llm_settings.get("model") or config.llm.model_name,
+        llm_settings.get("llm_endpoint") or config.llm.server_url or "api catalog",
+    )
+    llm = get_llm(config=config, **llm_settings)
+    # Generate initial subqueries
+    questions = await generate_subqueries(query, llm, prompts=prompts)
+
+    # If there's only one subquery, use basic RAG instead of query decomposition
+    if len(questions) == 1:
+        logger.info("No decomposition needed, using RAG directly")
+        single_query = query
+
+        # Retrieve and rank documents for the single query
+        retrieved_docs = retrieve_and_rank_documents(
+            single_query,
+            query,
+            vdb_op,
+            ranker,
+            collection_name,
+            top_k,
+            ranker_top_k,
+            config,
+        )
+
+        # Normalize relevance scores if reranker is used
+        if ranker and retrieved_docs:
+            ranker.top_n = ranker_top_k
+            retrieved_docs = normalize_relevance_scores(
+                retrieved_docs,
+                filter_docs=False,
+                confidence_threshold=confidence_threshold,
+                config=config,
+            )
+
+        # Generate final response directly
+        return await generate_final_response(
+            history=[],  # Empty answer since we're generating the final response directly
+            contexts=retrieved_docs,
+            original_query=query,
+            llm=llm,
+            enable_citations=enable_citations,
+            collection_name=collection_name,
+            prompts=prompts,
+        )
+
+    # query: context pair, this will contain all the subqueries and their contexts
+    final_contexts = {}
+    # This will contains all the subqueries and their response
+    conversation_history = []
+
+    # Iterative refinement process
+    for depth in range(recursion_depth):
+        logger.info(f"Recursion depth: {depth + 1}/{recursion_depth}")
+
+        # Process current set of questions
+        _, iteration_contexts = await process_subqueries(
+            questions,
+            query,
+            llm,
+            vdb_op,
+            ranker,
+            collection_name,
+            top_k,
+            ranker_top_k,
+            confidence_threshold,
+            conversation_history,
+            config,
+            prompts=prompts,
+        )
+        final_contexts.update(iteration_contexts)
+        # conversation_history.extend(iteration_history)
+
+        # Generate follow-up question for next iteration
+        followup_question = await generate_followup_question(
+            conversation_history, query, final_contexts, llm, prompts=prompts
+        )
+
+        if followup_question.strip().strip("'").strip('"'):
+            # Don't retry a question that already returned empty — it's not in the corpus
+            _empty = {"", "''", '""'}
+            already_tried_empty = any(
+                q.strip().lower() == followup_question.strip().lower()
+                and a.strip() in _empty
+                for q, a in conversation_history
+            )
+            if already_tried_empty:
+                logger.info(
+                    "Follow-up '%s' already returned empty, stopping at depth %d",
+                    followup_question, depth + 1,
+                )
+                break
+            questions = [followup_question]
+            logger.info(f"Continue with follow-up question: {followup_question}")
+        else:
+            logger.info(f"No follow-up needed, stopping at depth {depth + 1}")
+            break
+
+    # Search document from original query as well
+    retrieved_docs = retrieve_and_rank_documents(
+        query, query, vdb_op, ranker, collection_name, top_k, ranker_top_k, config
+    )
+
+    contexts = merge_contexts(
+        query,
+        retrieved_docs,
+        final_contexts,
+        max_documents=MAX_DOCUMENTS_FOR_GENERATION,
+        reranker=ranker,
+        filter_docs=True,
+    )
+    # Generate final comprehensive response
+    logger.info("Generating final response with all collected contexts")
+    return await generate_final_response(
+        conversation_history,
+        contexts,
+        query,
+        llm,
+        enable_citations,
+        collection_name,
+        prompts=prompts,
+    )

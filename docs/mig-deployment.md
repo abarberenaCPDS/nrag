@@ -1,0 +1,328 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+# Deploy NVIDIA RAG Blueprint on Kubernetes with Helm and MIG Support
+
+Use this documentation to deploy the [NVIDIA RAG Blueprint](readme.md) Helm chart with NVIDIA MIG (Multi-Instance GPU) slices for fine-grained GPU allocation.
+For other deployment options, refer to [Deployment Options](readme.md#deployment-options-for-rag-blueprint).
+
+To ensure that your GPUs are compatible with MIG,
+refer to the [MIG Supported Hardware List](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/#mig-user-guide).
+
+
+## Prerequisites
+
+Before you deploy, verify that you have the following:
+
+* A Kubernetes cluster with NVIDIA H100 or RTX PRO 6000 GPUs
+
+   :::{note}
+   This section showcases MIG support for `NVIDIA H100 80GB HBM3` GPU. The MIG profiles used in the `mig-config-h100.yaml` are specific to this GPU.
+   Refer to the [MIG User Guide](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/) for MIG profiles of other GPU types.
+   :::
+
+:::{important}
+- Ensure that you have at least 200GB of available disk space per node for NIM model caches and application data
+- First-time deployment takes 60-70 minutes while large models download without visible progress indicators
+
+For monitoring deployment progress, refer to [Deploy on Kubernetes with Helm](./deploy-helm.md#verify-a-deployment).
+:::
+
+1. [Get an API Key](api-key.md).
+
+2. Verify that you meet the [hardware requirements](support-matrix.md).
+
+3. Verify that you have the NGC CLI available on your client computer. You can download the CLI from <https://ngc.nvidia.com/setup/installers/cli>.
+
+4. Verify that you have Kubernetes v1.34.2 installed and running on Ubuntu 22.04/24.04. For more information, see [Kubernetes documentation](https://kubernetes.io/docs/setup/) and [NVIDIA Cloud Native Stack 17.0](https://github.com/NVIDIA/cloud-native-stack/tree/25.12.0).
+
+5. Verify that you have installed Helm 3. To install Helm 3 (and avoid Helm 4), follow the official Helm v3 installation instructions for your platform, for example by using the `get-helm-3` script described in the [Helm documentation](https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3).
+
+6. Verify that you have a default storage class available in the cluster for PVC provisioning. One option is the local path provisioner by Rancher.   Refer to the [installation](https://github.com/rancher/local-path-provisioner?tab=readme-ov-file#installation) section of the README in the GitHub repository.
+
+    ```console
+    kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml
+    kubectl get pods -n local-path-storage
+    kubectl get storageclass
+    ```
+
+6. If the local path storage class is not set as default, you can make it default by running the following code.
+
+    ```
+    kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+    ```
+
+7. Verify that you have installed the NVIDIA GPU Operator by using the instructions [here](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html).
+
+8. (Optional) You can enable time slicing for sharing GPUs between pods. For details, refer to [Time-Slicing GPUs in Kubernetes](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html).
+
+9. [Clone the RAG Blueprint Git repository](deploy-docker-self-hosted.md#clone-the-rag-blueprint-git-repository) to get access to the MIG configuration files.
+
+10. Verify that you have installed the NVIDIA NIM Operator. If not, install it by running the following code:
+
+    ```sh
+    helm repo add nvidia https://helm.ngc.nvidia.com/nvidia \
+      --username='$oauthtoken' \
+      --password=$NGC_API_KEY
+    helm repo update
+    helm install nim-operator nvidia/k8s-nim-operator -n nim-operator --create-namespace
+    ```
+
+    For more details, see instructions [here](https://docs.nvidia.com/nim-operator/latest/install.html).
+
+11. Install the ECK operator. Elasticsearch is the default vector database for this chart; the ECK operator manages Elasticsearch on Kubernetes.
+
+    ```sh
+    helm repo add elastic https://helm.elastic.co
+    helm repo update
+    helm install elastic-operator elastic/eck-operator -n elastic-system --create-namespace
+    ```
+
+  If you switch from the default stack to Milvus or another standalone backend and turn off the chart-managed Elasticsearch, the ECK operator is no longer required. See [Vector database configuration](change-vectordb.md) for details.
+
+    For verification commands and Elasticsearch tuning in Helm, see [Vector database configuration](change-vectordb.md).
+
+
+## Step 1: Enable MIG with Mixed Strategy
+
+1. Change your directory to ***deploy/helm/*** by running the following code.
+
+   ```sh
+   cd deploy/helm/
+   ```
+
+2. Create a namespace for the deployment by running the following code.
+
+    ```sh
+    kubectl create namespace rag
+    ```
+
+3. Update the GPU Operator's ClusterPolicy to use the mixed MIG strategy by running the following code.
+
+    ```bash
+    kubectl patch clusterpolicies.nvidia.com/cluster-policy \
+    --type='json' \
+    -p='[{"op":"replace", "path":"/spec/mig/strategy", "value":"mixed"}]'
+    ```
+
+
+
+## Step 2: Apply the MIG configuration
+
+Edit the MIG configuration file [`mig-config-h100.yaml`](../deploy/helm/mig-slicing/mig-config-h100.yaml) to adjust the slicing pattern as needed.
+The default configuration assumes a 5×H100 80GB node and reserves three full GPUs (two for the LLM and one for the embedding-VLM) while MIG-slicing the rest for the smaller NIMs.
+
+:::{note}
+The default LLM `nemotron-3-super-120b-a12b` runs with vLLM and `tensorParallelism=2`, which needs two physical GPUs with NVLink. Those two GPUs (GPU 0,1) are kept MIG-disabled. GPU 3 is also MIG-disabled and dedicated as a full GPU to the embedding-VLM NIM for higher throughput on the vision tower. GPU 2 is MIG-sliced to host OCR + page/graphic/table, and GPU 4 is MIG-sliced to host the reranker. This requires the `mixed` MIG strategy (already set in Step 1) so the node advertises both `nvidia.com/gpu` and `nvidia.com/mig-*` resources.
+:::
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-mig-config
+data:
+  config.yaml: |
+    version: v1
+    mig-configs:
+      all-disabled:
+        - devices: all
+          mig-enabled: false
+
+      custom-h100-5gpu-llm2full-embed1full:
+        - devices: [0, 1]
+          mig-enabled: false
+        - devices: [2]
+          mig-enabled: true
+          mig-devices:
+            "3g.40gb": 1
+            "1g.10gb": 4
+        - devices: [3]
+          mig-enabled: false
+        - devices: [4]
+          mig-enabled: true
+          mig-devices:
+            "3g.40gb": 1
+            "1g.20gb": 2
+```
+
+Apply the custom MIG configuration configMap to the node and update the ClusterPolicy, by running the following code.
+
+```bash
+kubectl apply -n nvidia-gpu-operator -f mig-slicing/mig-config-h100.yaml
+kubectl patch clusterpolicies.nvidia.com/cluster-policy \
+  --type='json' \
+  -p='[{"op":"replace", "path":"/spec/migManager/config/name", "value":"custom-mig-config"}]'
+```
+
+Label the node with MIG configuration, by running the following code.
+
+```bash
+kubectl label nodes <node-name> nvidia.com/mig.config=custom-h100-5gpu-llm2full-embed1full --overwrite
+```
+
+:::{important}
+**For NVIDIA RTX6000 Pro Deployments:**
+
+Use [`mig-config-rtx6000.yaml`](../deploy/helm/mig-slicing/mig-config-rtx6000.yaml) instead. The same "two full GPUs for LLM + MIG-slice the rest" pattern applies, mapped onto the RTX PRO 6000 Blackwell MIG profiles. This path is a logical mirror of the H100 layout and has not been hardware-verified.
+
+```bash
+kubectl apply -n nvidia-gpu-operator -f mig-slicing/mig-config-rtx6000.yaml
+kubectl patch clusterpolicies.nvidia.com/cluster-policy \
+  --type='json' \
+  -p='[{"op":"replace", "path":"/spec/migManager/config/name", "value":"custom-mig-config"}]'
+kubectl label nodes <node-name> nvidia.com/mig.config=custom-rtx6000-llm2full-1x2g48-2x1g24-4x1g24 --overwrite
+```
+:::
+
+Verify that the MIG configuration is successfully applied, by running the following code.
+
+```bash
+kubectl get node <node-name> -o=jsonpath='{.metadata.labels}' | jq . | grep mig
+```
+
+You should see output similar to the following.
+
+```json
+"nvidia.com/mig.config.state": "success"
+"nvidia.com/gpu.count": "3"
+"nvidia.com/mig-3g.40gb.count": "2"
+"nvidia.com/mig-1g.10gb.count": "4"
+"nvidia.com/mig-1g.20gb.count": "2"
+```
+
+
+
+## Step 3: Install RAG Blueprint Helm Chart with MIG Values
+
+Run the following code to install the RAG Blueprint Helm Chart.
+
+```bash
+helm upgrade --install rag -n rag https://helm.ngc.nvidia.com/nvidia/blueprint/charts/nvidia-blueprint-rag-v2.6.0.tgz \
+  --username '$oauthtoken' \
+  --password "${NGC_API_KEY}" \
+  --set imagePullSecret.password=$NGC_API_KEY \
+  --set ngcApiSecret.password=$NGC_API_KEY \
+  -f mig-slicing/values-mig-h100.yaml
+```
+
+:::{important}
+**For NVIDIA RTX6000 Pro Deployments:**
+
+If you are deploying on NVIDIA RTX6000 Pro GPUs (instead of H100 GPUs), use [`values-mig-rtx6000.yaml`](../deploy/helm/mig-slicing/values-mig-rtx6000.yaml) and [`mig-config-rtx6000.yaml`](../deploy/helm/mig-slicing/mig-config-rtx6000.yaml) which include the RTX6000-specific MIG profiles and NIM LLM model configuration.
+
+```sh
+helm upgrade --install rag -n rag https://helm.ngc.nvidia.com/nvidia/blueprint/charts/nvidia-blueprint-rag-v2.6.0.tgz \
+  --username '$oauthtoken' \
+  --password "${NGC_API_KEY}" \
+  --set imagePullSecret.password=$NGC_API_KEY \
+  --set ngcApiSecret.password=$NGC_API_KEY \
+  -f mig-slicing/values-mig-rtx6000.yaml
+```
+:::
+
+:::{note}
+Refer to [NIM Model Profile Configuration](model-profiles.md) for using non-default NIM LLM profile.
+:::
+
+:::{note}
+Due to a known issue with MIG support, currently the ingestion profile has been scaled down while deploying the chart with MIG slicing.
+This is expected to affect the ingestion performance during bulk ingestion, specifically large bulk ingestion jobs might fail.
+:::
+
+
+
+## Step 4: Verify MIG Resource Allocation
+
+To view pod GPU assignments, run [`kubectl-view-allocations`](https://github.com/davidB/kubectl-view-allocations) as shown following.
+
+```bash
+kubectl-view-allocations
+```
+
+You should see output similar to the following.
+
+```
+Resource                                    Requested   Limit    Allocatable  Free
+nvidia.com/gpu                              (100%) 3.0  (100%) 3.0     3.0        0.0
+├─ nim-llm-...                             2.0     2.0
+└─ nemotron-vlm-embedding-ms-...           1.0     1.0
+
+nvidia.com/mig-3g.40gb                      (50%) 1.0   (50%) 1.0     2.0        1.0
+└─ nemotron-ocr-v1-...                     1.0     1.0
+
+nvidia.com/mig-1g.10gb                      (75%) 3.0   (75%) 3.0     4.0        1.0
+├─ nemotron-graphic-elements-v1-...        1.0     1.0
+├─ nemotron-page-elements-v3-...           1.0     1.0
+└─ nemotron-table-structure-v1-...         1.0     1.0
+
+nvidia.com/mig-1g.20gb                      (50%) 1.0   (50%) 1.0     2.0        1.0
+└─ nemotron-ranking-ms-...                 1.0     1.0
+```
+
+
+
+## Step 5: Check the MIG Slices
+
+To check the MIG slices, run the following code from the GPU Operator driver pod.
+This runs `nvidia-smi` within the pod to check GPU MIG slices.
+
+```bash
+kubectl exec -n gpu-operator -it <driver-daemonset-pod> -- nvidia-smi -L
+```
+
+You should see output similar to the following.
+
+```
+GPU 0: NVIDIA H100 80GB HBM3 (UUID: ...)
+GPU 1: NVIDIA H100 80GB HBM3 (UUID: ...)
+GPU 2: NVIDIA H100 80GB HBM3 (UUID: ...)
+  MIG 3g.40gb     Device 0: ...
+  MIG 1g.10gb     Device 1: ...
+  MIG 1g.10gb     Device 2: ...
+  MIG 1g.10gb     Device 3: ...
+  MIG 1g.10gb     Device 4: ...
+GPU 3: NVIDIA H100 80GB HBM3 (UUID: ...)
+GPU 4: NVIDIA H100 80GB HBM3 (UUID: ...)
+  MIG 3g.40gb     Device 0: ...
+  MIG 1g.20gb     Device 1: ...
+  MIG 1g.20gb     Device 2: ...
+```
+
+GPUs 0, 1, and 3 are reported as whole devices because MIG is disabled on them — GPUs 0 and 1 are reserved for `nim-llm` (vLLM tp=2), and GPU 3 is dedicated to the embedding-VLM NIM. GPU 4 is MIG-sliced and currently hosts only the reranker (1× 1g.20gb); the remaining 3g.40gb and second 1g.20gb slices are spare capacity for future workloads.
+
+
+
+## Step 6: Follow the Remaining Instructions
+
+
+6. Follow the remaining instructions in [Deploy on Kubernetes with Helm](./deploy-helm.md):
+
+    - [Verify a Deployment](deploy-helm.md#verify-a-deployment)
+    - [Port-Forwarding to Access Web User Interface](deploy-helm.md#port-forwarding-to-access-web-user-interface)
+    - [Experiment with the Web User Interface](deploy-helm.md#experiment-with-the-web-user-interface)
+    - [Change a deployment](deploy-helm.md#change-a-deployment)
+    - [Uninstall a deployment](deploy-helm.md#uninstall-a-deployment)
+    - [(Optional) Enable Persistence](deploy-helm.md#optional-enable-persistence)
+    - [Troubleshooting Helm Issues](deploy-helm.md#troubleshooting-helm-issues)
+
+
+
+## Best Practices
+
+* Ensure you have the correct MIG strategy (`mixed`) configured.
+* Verify that `nvidia.com/mig.config.state` is `success` before deploying.
+* Customize `values-mig-h100.yaml` or `values-mig-rtx6000.yaml` to specify the correct MIG GPU resource requests for each pod.
+
+
+
+## Related Topics
+
+- [NVIDIA RAG Blueprint Documentation](readme.md)
+- [RAG Pipeline Debugging Guide](debugging.md)
+- [Troubleshoot](troubleshooting.md)
+- [Notebooks](notebooks.md)
+- [NVIDIA GPU Operator Docs](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/)
+- [MIG User Guide](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/)
+- [Best Practices for Common Settings](accuracy_perf.md).

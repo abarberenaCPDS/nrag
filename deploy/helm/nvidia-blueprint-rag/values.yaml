@@ -1,0 +1,1425 @@
+# -- Global chart configuration
+nameOverride: ""
+fullnameOverride: "rag-server"
+
+# -- OpenShift / OKD support
+# When enabled, the chart creates Routes (instead of relying on manual oc commands)
+# and a RoleBinding granting the anyuid SCC to service accounts that need it.
+openshift:
+  enabled: false
+# subsection: rag-server
+# RAG Orchestrator Service
+# -- Kubernetes scheduling
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
+# -- Common service account for rag-server
+serviceAccount:
+  create: true
+  name: ""
+  automount: true
+  annotations: {}
+
+# -- Replicas for rag-server
+replicaCount: 1
+
+# -- Namespace for documentation/reference; not actively used in templates
+namespace: "nv-nvidia-blueprint-rag"
+
+# -- Image pull secret for all images used by this chart
+imagePullSecret:
+  name: "ngc-secret"
+  registry: "nvcr.io"
+  username: "$oauthtoken"
+  password: ""
+  create: true
+
+# -- Secret containing API keys for NVIDIA NGC model registry
+ngcApiSecret:
+  name: "ngc-api"
+  password: ""
+  create: true
+
+# -- Secret containing service-specific API keys for RAG services
+apiKeysSecret:
+  # -- Enable automatic secret creation from values below
+  create: true
+  # -- Name of the secret to create or reference
+  name: "rag-api-keys"
+  # -- Reference to existing secret (if set, chart won't create secret, will reference this instead)
+  existingSecret: ""
+  # -- Service-specific API keys (optional, empty means use NVIDIA_API_KEY fallback)
+  # Note: Non-empty values act as enable flags - only non-empty keys are injected as env vars
+  llmApiKey: ""
+  embeddingsApiKey: ""
+  rankingApiKey: ""
+  queryRewriterApiKey: ""
+  filterExpressionGeneratorApiKey: ""
+  vlmApiKey: ""
+  summaryLlmApiKey: ""
+  reflectionLlmApiKey: ""
+  agenticPlannerLlmApiKey: ""
+  agenticTaskLlmApiKey: ""
+  agenticSeedGenLlmApiKey: ""
+  agenticSynthesisLlmApiKey: ""
+
+# -- RAG server container image
+image:
+  repository: nvcr.io/nvidia/blueprint/rag-server
+  tag: "2.6.0"
+  pullPolicy: Always
+
+# -- RAG server service configuration
+service:
+  type: ClusterIP
+  port: 8081
+
+# -- RAG server container resources
+resources:
+  limits:
+    memory: "64Gi"
+  requests:
+    memory: "8Gi"
+
+# -- Probes for rag-server (optional)
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8081
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# -- RAG server runtime configuration
+server:
+  workers: 128
+
+# -- Enable/disable creation of prompt ConfigMap
+promptConfig:
+  enabled: true
+
+# -- Environment variables for rag-server
+envVars:
+  EXAMPLE_PATH: "./nvidia_rag/rag_server"
+  PROMPT_CONFIG_FILE: "/prompt.yaml"
+  PROMETHEUS_MULTIPROC_DIR: "/tmp-data/prom_data"
+
+  ##===Authentication===
+  ## Service-specific API keys are now managed via apiKeysSecret section above.
+  ## See apiKeysSecret configuration for details on setting service-specific keys.
+
+  ##===Object-store configurations used to store multimodal base64 content===
+  OBJECTSTORE_ENDPOINT: "rag-seaweedfs-all-in-one:9010"
+  OBJECTSTORE_ACCESSKEY: "seaweedfsadmin"
+  OBJECTSTORE_SECRETKEY: "seaweedfsadmin"
+
+  ##===Redis configurations for summary status tracking===
+  REDIS_HOST: "rag-redis-master"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+
+  ##===Vector DB specific configurations===
+  # URL on which vectorstore is hosted
+  APP_VECTORSTORE_URL: "http://rag-eck-elasticsearch-es-default:9200"
+  # Type of vectordb used to store embedding
+  APP_VECTORSTORE_NAME: "elasticsearch"
+  # Index type used by the vectorstore (Elasticsearch uses its own index mapping)
+  APP_VECTORSTORE_INDEXTYPE: "GPU_CAGRA"
+  # Type of vectordb search to be used
+  APP_VECTORSTORE_SEARCHTYPE: "dense"
+  # Type of ranker to use for vector store in case of Hybrid Search
+  APP_VECTORSTORE_RANKER_TYPE: "rrf" # Can be "rrf" or "weighted"
+  # Weight for dense vector search in case of "weighted" Hybrid Search
+  APP_VECTORSTORE_DENSE_WEIGHT: "0.5"
+  # Weight for sparse vector search in case of "weighted" Hybrid Search
+  APP_VECTORSTORE_SPARSE_WEIGHT: "0.5"
+  # GPU search is not supported by Elasticsearch.
+  APP_VECTORSTORE_ENABLEGPUSEARCH: "False"
+  # ef: Parameter controlling query time/accuracy trade-off. Higher ef leads to more accurate but slower search.
+  APP_VECTORSTORE_EF: "100"
+  # Username for vector store authentication
+  APP_VECTORSTORE_USERNAME: ""
+  # Password for vector store authentication
+  APP_VECTORSTORE_PASSWORD: ""
+  # Elasticsearch API key auth (optional). Prefer these over username/password when set.
+  # Provide either base64 APP_VECTORSTORE_APIKEY or split ID/SECRET.
+  APP_VECTORSTORE_APIKEY_ID: ""
+  APP_VECTORSTORE_APIKEY_SECRET: ""
+  APP_VECTORSTORE_APIKEY: ""
+
+  # vectorstore collection name to store embeddings
+  COLLECTION_NAME: "multimodal_data"
+  APP_RETRIEVER_SCORETHRESHOLD: "0.25"
+  # Top K from vector DB, which goes as input to reranker model - not applicable if ENABLE_RERANKER is set to False
+  VECTOR_DB_TOPK: "100"
+  # Number of document chunks to insert in LLM prompt
+  APP_RETRIEVER_TOPK: "10"
+
+  ##===LLM Model specific configurations===
+  APP_LLM_MODELNAME: "nvidia/nemotron-3-super-120b-a12b"
+  # URL on which LLM model is hosted. If "", Nvidia hosted API is used
+  APP_LLM_SERVERURL: "nim-llm:8000"
+  # LLM model parameters
+  LLM_MAX_TOKENS: "16256"
+  LLM_TEMPERATURE: "0"
+  LLM_TOP_P: "1.0"
+
+  ##===Query Rewriter Model specific configurations===
+  APP_QUERYREWRITER_MODELNAME: "nvidia/nemotron-3-super-120b-a12b"
+  # URL on which query rewriter model is hosted. If "", Nvidia hosted API is used
+  APP_QUERYREWRITER_SERVERURL: "nim-llm:8000"
+
+  ##===Filter Expression Generator Model specific configurations===
+  APP_FILTEREXPRESSIONGENERATOR_MODELNAME: "nvidia/nemotron-3-super-120b-a12b"
+  # URL on which filter expression generator model is hosted. If "", Nvidia hosted API is used
+  APP_FILTEREXPRESSIONGENERATOR_SERVERURL: "nim-llm:8000"
+  # enable filter expression generator for natural language to filter expression conversion
+  ENABLE_FILTER_GENERATOR: "False"
+
+  ##===Embedding Model specific configurations===
+  # URL on which embedding model is hosted. If "", Nvidia hosted API is used
+  APP_EMBEDDINGS_SERVERURL: "nemotron-vlm-embedding-ms:8000/v1"
+  APP_EMBEDDINGS_MODELNAME: "nvidia/llama-nemotron-embed-vl-1b-v2"
+  APP_EMBEDDINGS_DIMENSIONS: "2048"
+
+  ##===Reranking Model specific configurations===
+  # URL on which ranking model is hosted. If "", Nvidia hosted API is used
+  APP_RANKING_SERVERURL: "nemotron-ranking-ms:8000"
+  APP_RANKING_MODELNAME: "nvidia/llama-nemotron-rerank-1b-v2"
+  ENABLE_RERANKER: "True"
+  # Default score threshold for filtering documents by reranker relevance (0.0 to 1.0)
+  RERANKER_SCORE_THRESHOLD: "0.0"
+  # When True, images from retrieved citations are included in VLM reranker passages
+  ENABLE_VLM_RERANKER_IMAGE_INPUT: "False"
+
+  ##===VLM Model specific configurations===
+  ENABLE_VLM_INFERENCE: "False"
+  # When true, allow falling back to LLM flow if no images are present in query/messages/context.
+  # When false, always route generation through VLM when ENABLE_VLM_INFERENCE is true.
+  VLM_TO_LLM_FALLBACK: "False"
+  # Max images sent to VLM per request (query + context)
+  APP_VLM_MAX_TOTAL_IMAGES: "5"
+  # Whether to filter out reasoning tokens from VLM responses (stream only content, not reasoning)
+  VLM_FILTER_THINK_TOKENS: "true"
+  # Enable Nemotron Omni reasoning mode (separates chain-of-thought into a `reasoning` delta)
+  APP_VLM_ENABLE_THINKING: "true"
+  # Max reasoning tokens for VLM (0 = no cap); only applied when enable_thinking is true
+  APP_VLM_THINKING_TOKEN_BUDGET: "16384"
+  # VLM generation parameters
+  APP_VLM_MAX_TOKENS: "32768"
+  APP_VLM_TEMPERATURE: "0.6"
+  APP_VLM_TOP_P: "0.95"
+  # VLM server URL
+  APP_VLM_SERVERURL: "http://nim-vlm:8000/v1"
+  # VLM model name
+  APP_VLM_MODELNAME: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+
+  # === Text Splitter ===
+  APP_TEXTSPLITTER_CHUNKSIZE: "2000"
+  APP_TEXTSPLITTER_CHUNKOVERLAP: "200"
+
+  # === General ===
+  # Choose whether to enable citations in the response
+  ENABLE_CITATIONS: "True"
+  # Choose whether to enable/disable guardrails
+  ENABLE_GUARDRAILS: "False"
+  # Log level for server, supported level NOTSET, DEBUG, INFO, WARN, ERROR, CRITICAL
+  LOGLEVEL: "INFO"
+  # enable multi-turn conversation in the rag chain - this controls conversation history usage
+  # while doing query rewriting and in LLM prompt
+  ENABLE_MULTITURN: "True"
+  # enable query rewriting for multiturn conversation in the rag chain.
+  # This will improve accuracy of the retrieiver pipeline but increase latency due to an additional LLM call
+  ENABLE_QUERYREWRITER: "False"
+  # enable concatenating conversation history with current query for retrieval (when query rewriter is disabled)
+  MULTITURN_RETRIEVER_SIMPLE: "False"
+  # number of last n chat messages to consider from the provided conversation history (0 = no history)
+  CONVERSATION_HISTORY: "0"
+
+  # === Tracing ===
+  APP_TRACING_ENABLED: "False"
+  # HTTP endpoint
+  APP_TRACING_OTLPHTTPENDPOINT: "http://rag-opentelemetry-collector:4318/v1/traces"
+  # GRPC endpoint
+  APP_TRACING_OTLPGRPCENDPOINT: "grpc://rag-opentelemetry-collector:4317"
+
+  # === Reflection ===
+  # enable reflection (context relevance and response groundedness checking) in the rag chain
+  ENABLE_REFLECTION: "false"
+  # Maximum number of context relevance loop iterations
+  MAX_REFLECTION_LOOP: "3"
+  # Minimum relevance score threshold (0-2)
+  CONTEXT_RELEVANCE_THRESHOLD: "1"
+  # Minimum groundedness score threshold (0-2)
+  RESPONSE_GROUNDEDNESS_THRESHOLD: "1"
+  # reflection llm
+  REFLECTION_LLM: "nvidia/nemotron-3-super-120b-a12b"
+  # reflection llm server url. If "", Nvidia hosted API is used
+  REFLECTION_LLM_SERVERURL: "nim-llm:8000"
+
+  # Choose whether to enable source metadata in document content during generation
+  ENABLE_SOURCE_METADATA: "true"
+
+  # Whether to filter content within <think></think> tags in model responses
+  FILTER_THINK_TOKENS: "true"
+
+  # Reasoning configuration (enabled by default for Nemotron 3 Super)
+  LLM_ENABLE_THINKING: "true"
+  LLM_REASONING_BUDGET: "256"
+  LLM_LOW_EFFORT: "true"
+
+  NEMO_GUARDRAILS_URL: "nemo-guardrails:7331"
+
+  # enable iterative query decomposition
+  ENABLE_QUERY_DECOMPOSITION: "false"
+  # maximum recursion depth for iterative query decomposition
+  MAX_RECURSION_DEPTH: "3"
+
+  # === Agentic RAG (LangGraph plan-and-execute pipeline) ===
+  # Enable agentic RAG pipeline for knowledge-base queries
+  ENABLE_AGENTIC_RAG: "false"
+
+  ##===Agentic Planner LLM configurations===
+  # URL on which agentic planner LLM is hosted. If "", Nvidia hosted API is used
+  AGENTIC_PLANNER_LLM_SERVERURL: "nim-llm:8000"
+  AGENTIC_PLANNER_LLM_MODEL: "nvidia/nemotron-3-super-120b-a12b"
+
+  ##===Agentic Task LLM configurations===
+  # URL on which agentic task LLM is hosted. If "", Nvidia hosted API is used
+  AGENTIC_TASK_LLM_SERVERURL: "nim-llm:8000"
+  AGENTIC_TASK_LLM_MODEL: "nvidia/nemotron-3-super-120b-a12b"
+
+  ##===Agentic Seed Gen LLM configurations===
+  # URL on which agentic seed-gen LLM is hosted. If "", Nvidia hosted API is used
+  AGENTIC_SEED_GEN_LLM_SERVERURL: "nim-llm:8000"
+  AGENTIC_SEED_GEN_LLM_MODEL: "nvidia/nemotron-3-super-120b-a12b"
+
+  ##===Agentic Synthesis LLM configurations===
+  # URL on which agentic synthesis LLM is hosted. If "", Nvidia hosted API is used
+  AGENTIC_SYNTHESIS_LLM_SERVERURL: "nim-llm:8000"
+  AGENTIC_SYNTHESIS_LLM_MODEL: "nvidia/nemotron-3-super-120b-a12b"
+
+  # Agent behaviour tuning
+  AGENTIC_LOG_LEVEL: "INFO"
+
+  # Verification pass (disabled by default)
+  AGENTIC_VERIFICATION_ENABLED: "false"
+
+  # Context window budget for retrieved chunks
+  AGENTIC_CONTEXT_MAX_TOKENS: "100000"
+
+# -- Ingestor Server
+# subsection: ingestor-server
+# Ingestor API Service
+ingestor-server:
+  enabled: true
+  appName: ingestor-server
+
+  # -- Pod scheduling
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+  replicaCount: 1
+
+  imagePullSecret:
+    create: false
+    name: "ngc-secret"
+    registry: "nvcr.io"
+    username: "$oauthtoken"
+    password: ""
+
+  image:
+    repository: nvcr.io/nvidia/blueprint/ingestor-server
+    tag: "2.6.0"
+    pullPolicy: Always
+
+  # -- Service config for ingestor-server
+  service:
+    type: ClusterIP
+    port: 8082
+
+  server:
+    workers: 1
+
+  # -- Probes for ingestor-server (optional)
+  livenessProbe: {}
+  readinessProbe: {}
+
+  resources:
+    limits:
+      memory: "25Gi"
+    requests:
+      memory: "25Gi"
+
+  envVars:
+    # Path to example directory relative to repo root
+    EXAMPLE_PATH: "src/nvidia_rag/ingestor_server"
+    # Absolute path to custom prompt.yaml file
+    PROMPT_CONFIG_FILE: "/prompt.yaml"
+    # === Vector Store Configurations ===
+    APP_VECTORSTORE_URL: "http://rag-eck-elasticsearch-es-default:9200"
+    APP_VECTORSTORE_NAME: "elasticsearch"
+    APP_VECTORSTORE_SEARCHTYPE: "dense"
+    # Type of ranker to use for vector store in case of Hybrid Search
+    APP_VECTORSTORE_RANKER_TYPE: "rrf" # Can be "rrf" or "weighted"
+    # Weight for dense vector search in case of "weighted" Hybrid Search
+    APP_VECTORSTORE_DENSE_WEIGHT: "0.5"
+    # Weight for sparse vector search in case of "weighted" Hybrid Search
+    APP_VECTORSTORE_SPARSE_WEIGHT: "0.5"
+    # Enable GPU index building (requires GPU-capable Elasticsearch image and license).
+    APP_VECTORSTORE_ENABLEGPUINDEX: "False"
+    # GPU search is not supported by Elasticsearch.
+    APP_VECTORSTORE_ENABLEGPUSEARCH: "False"
+    # Username  for vector store authentication
+    APP_VECTORSTORE_USERNAME: ""
+    # Password for vector store authentication
+    APP_VECTORSTORE_PASSWORD: ""
+    # Elasticsearch API key auth (optional). Prefer these over username/password when set.
+    # Provide either base64 APP_VECTORSTORE_APIKEY or split ID/SECRET.
+    APP_VECTORSTORE_APIKEY_ID: ""
+    APP_VECTORSTORE_APIKEY_SECRET: ""
+    APP_VECTORSTORE_APIKEY: ""
+    COLLECTION_NAME: "multimodal_data"
+
+    # === Object Store Configurations ===
+    OBJECTSTORE_ENDPOINT: "rag-seaweedfs-all-in-one:9010"
+    OBJECTSTORE_ACCESSKEY: "seaweedfsadmin"
+    OBJECTSTORE_SECRETKEY: "seaweedfsadmin"
+
+    # === Authentication ===
+    ## Service-specific API keys are managed via apiKeysSecret section (see top-level config).
+    ## APP_EMBEDDINGS_APIKEY and SUMMARY_LLM_APIKEY are loaded from secrets automatically.
+
+    # === Embeddings Configurations ===
+    APP_EMBEDDINGS_SERVERURL: "nemotron-vlm-embedding-ms:8000/v1"
+    APP_EMBEDDINGS_MODELNAME: "nvidia/llama-nemotron-embed-vl-1b-v2"
+    APP_EMBEDDINGS_DIMENSIONS: "2048"
+
+    # === NV-Ingest Configurations ===
+    APP_NVINGEST_MESSAGECLIENTHOSTNAME: "rag-nv-ingest"
+    APP_NVINGEST_MESSAGECLIENTPORT: "7670"
+
+    # === NV-Ingest extraction configurations ===
+    APP_NVINGEST_PDFEXTRACTMETHOD: "None"  # Method used for text extraction from "None", "pdfium", "nemotron_parse"
+    APP_NVINGEST_EXTRACTTABLESMETHOD: "yolox"  # Method for table extraction: "yolox", "nemotron_parse", or None
+    APP_NVINGEST_EXTRACTTEXT: "True"  # Enable text extraction
+    APP_NVINGEST_EXTRACTINFOGRAPHICS: "False"  # Enable infographic extraction
+    APP_NVINGEST_EXTRACTTABLES: "True"  # Enable table extraction
+    APP_NVINGEST_EXTRACTCHARTS: "True"  # Enable chart extraction
+    APP_NVINGEST_EXTRACTIMAGES: "False"  # Enable image extraction
+    APP_NVINGEST_EXTRACTPAGEASIMAGE: "False"  # Extracts each page as image if enabled
+    APP_NVINGEST_STRUCTURED_ELEMENTS_MODALITY: ""  # "image", "text_image"
+    APP_NVINGEST_IMAGE_ELEMENTS_MODALITY: ""  # "image"
+    APP_NVINGEST_TEXTDEPTH: "page"  # Extract text by "page" or "document"
+
+    # === NV-Ingest caption configurations ===
+    APP_NVINGEST_CAPTIONMODELNAME: "nvidia/nemotron-nano-12b-v2-vl"  # Model name for captioning
+    APP_NVINGEST_CAPTIONENDPOINTURL: "http://nim-vlm-captioning:8000/v1/chat/completions"  # Endpoint URL for captioning model
+
+    # NeMo Retriever invoke URLs (HTTP) for local NIMs (see rag-nv-ingest YOLOX_*_HTTP_ENDPOINT)
+    APP_NVINGEST_PAGEELEMENTSURL: "http://nemotron-page-elements-v3:8000/v1/infer"
+    APP_NVINGEST_GRAPHICELEMENTSURL: "http://nemotron-graphic-elements-v1:8000/v1/infer"
+    APP_NVINGEST_OCRURL: "http://nemotron-ocr-v1:8000/v1/infer"
+    APP_NVINGEST_TABLESTRUCTUREURL: "http://nemotron-table-structure-v1:8000/v1/infer"
+
+    # === NV-Ingest save to disk configurations ===
+    APP_NVINGEST_SAVETODISK: "False"
+    NVINGEST_OBJECTSTORE_BUCKET: "nv-ingest"
+
+    # === NV-Ingest performance configurations ===
+    APP_NVINGEST_ENABLE_PDF_SPLIT_PROCESSING: "False"
+    APP_NVINGEST_PAGES_PER_CHUNK: "16"
+
+    # === General ===
+    # Summary Model Configurations
+    SUMMARY_LLM: "nvidia/nemotron-3-super-120b-a12b"
+    SUMMARY_LLM_SERVERURL: "nim-llm:8000"
+    SUMMARY_LLM_MAX_CHUNK_LENGTH: "9000"
+    SUMMARY_CHUNK_OVERLAP: "400"
+    SUMMARY_LLM_TEMPERATURE: "0.0"
+    SUMMARY_LLM_TOP_P: "1.0"
+    SUMMARY_MAX_PARALLELIZATION: "20"
+
+    # === General ===
+    ENABLE_CITATIONS: "True"
+    LOGLEVEL: "INFO"
+
+    # === NV-Ingest splitting configurations ===
+    APP_NVINGEST_CHUNKSIZE: "512"  # Size of chunks for splitting
+    APP_NVINGEST_CHUNKOVERLAP: "150"  # Overlap size for chunks
+    APP_NVINGEST_ENABLE_PAGED_DOC_SPLIT: "False"  # Enable paged document splitting
+    APP_NVINGEST_SEGMENTAUDIO: "False"  # Enable audio segmentation for NV Ingest
+
+    # === Redis configurations ===
+    REDIS_HOST: "rag-redis-master"
+    REDIS_PORT: "6379"
+    REDIS_DB: "0"
+    ENABLE_REDIS_BACKEND: "False"
+
+    TEMP_DIR: "/tmp-data"
+    INGESTOR_SERVER_DATA_DIR: "/data/"
+
+    # === NV-Ingest Batch Mode Configurations ===
+    NV_INGEST_FILES_PER_BATCH: "16"
+    NV_INGEST_CONCURRENT_BATCHES: "4"
+    ENABLE_NV_INGEST_DYNAMIC_BATCHING: "True"
+    # Max memory budget (MB) for a single ingestion job; used for dynamic batch sizing
+    INGESTION_MAX_MEMORY_BUDGET_MB: "1024"
+
+    # === Tracing ===
+    APP_TRACING_ENABLED: "False"
+    # HTTP endpoint
+    APP_TRACING_OTLPHTTPENDPOINT: "http://otel-collector:4318/v1/traces"
+    # GRPC endpoint
+    APP_TRACING_OTLPGRPCENDPOINT: "grpc://otel-collector:4317"
+
+  # -- Persistent storage for ingestor-server data directory
+  # If enabled, mounts a PVC at the path used by INGESTOR_SERVER_DATA_DIR
+  persistence:
+    enabled: true
+    # If set, use an existing PVC by name; when empty and enabled, a PVC is created
+    existingClaim: ""
+    # StorageClass to use for the PVC; keep empty to use the cluster default
+    storageClass: ""
+    # Access modes for the PVC
+    accessModes:
+      - ReadWriteOnce
+    # Requested size for the PVC
+    size: 50Gi
+    # Mount path inside the container; defaults to envVars.INGESTOR_SERVER_DATA_DIR if empty
+    mountPath: "/data/"
+    # Optional subPath within the PVC
+    subPath: ""
+
+# -- SeaweedFS shared object store
+seaweedfs:
+  enabled: true
+  fullnameOverride: "rag-seaweedfs"
+  nameOverride: "seaweedfs"
+  image:
+    repository: "chrislusf/seaweedfs"
+    tag: "3.73"
+  global:
+    seaweedfs:
+      createClusterRole: false
+      imagePullPolicy: IfNotPresent
+  master:
+    enabled: false
+  volume:
+    enabled: false
+  filer:
+    enabled: false
+  s3:
+    enabled: false
+    enableAuth: true
+    credentials:
+      admin:
+        accessKey: "seaweedfsadmin"
+        secretKey: "seaweedfsadmin"
+  sftp:
+    enabled: false
+  allInOne:
+    enabled: true
+    service:
+      type: ClusterIP
+    s3:
+      enabled: true
+      port: 9010
+      enableAuth: true
+    data:
+      type: "persistentVolumeClaim"
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+      size: 50Gi
+
+# -- Frontend
+# subsection: frontend
+# rag frontend Frontend
+frontend:
+  enabled: true
+  appName: "rag-frontend"
+
+  replicaCount: 1
+
+  image:
+    repository: nvcr.io/nvidia/blueprint/rag-frontend
+    pullPolicy: IfNotPresent
+    tag: "2.6.0"
+
+  imagePullSecret:
+    name: "ngc-secret"
+    registry: "nvcr.io"
+    username: "$oauthtoken"
+    password: ""
+
+  service:
+    type: NodePort
+    port: 3000
+
+  # -- Probes for frontend (optional)
+  livenessProbe: {}
+  readinessProbe: {}
+
+  envVars:
+    # Runtime environment variables for Vite frontend
+    # Note: Model names are now managed by frontend settings store
+    - name: VITE_API_CHAT_URL
+      value: "http://rag-server:8081/v1"
+    - name: VITE_API_VDB_URL
+      value: "http://ingestor-server:8082/v1"
+
+# -- Elasticsearch dependency toggle (ECK). When true, align APP_VECTORSTORE_URL with the ES HTTP service (e.g. rag-eck-elasticsearch-es-http:9200).
+eck-elasticsearch:
+  fullnameOverride: "rag-eck-elasticsearch"
+  enabled: true
+  # Uncomment this line to use a custom Elasticsearch GPU image
+  # image: <your-es-gpu-image-here>
+  # Preserve PVCs on helm uninstall; only delete when a node is explicitly scaled down.
+  volumeClaimDeletePolicy: DeleteOnScaledownOnly
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true
+  nodeSets:
+  - name: default
+    count: 1
+    config:
+      node.store.allow_mmap: false
+      xpack.security.enabled: false
+      xpack.security.http.ssl.enabled: false
+      xpack.security.transport.ssl.enabled: false
+      # Uncomment this line to use GPU for Elasticsearch
+      # vectors.indexing.use_gpu: true
+    volumeClaimTemplates:
+    - metadata:
+        name: elasticsearch-data
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 50Gi
+    podTemplate:
+      spec:
+        # Uncomment this line to download the image from NGC
+        # imagePullSecrets:
+        #   - name: ngc-secret
+        # JVM heap (-Xmx) must be ≤ 50% of pod memory limit; limit ≥ 2× -Xmx (here 2g heap → 4Gi limit).
+        initContainers:
+        - name: elastic-internal-init-filesystem
+          env:
+          - name: ES_JAVA_OPTS
+            value: "-Xms2g -Xmx2g"
+        containers:
+        - name: elasticsearch
+          env:
+          - name: ES_JAVA_OPTS
+            value: "-Xms2g -Xmx2g"
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "500m"
+              # Uncomment this line to use GPU for Elasticsearch
+              # nvidia.com/gpu: 1
+            limits:
+              memory: "4Gi"
+              # Uncomment this line to use GPU for Elasticsearch
+              # nvidia.com/gpu: 1
+          # Override readiness probe to not require authentication; tolerant under ingest load
+          readinessProbe:
+            exec:
+              command:
+              - bash
+              - -c
+              - |
+                curl -s http://localhost:9200/_cluster/health | grep -q '"status":"green"\|"status":"yellow"'
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+
+# -- Observability
+# subsection: serviceMonitor
+serviceMonitor:
+  enabled: false
+
+# subsection: opentelemetry-collector
+opentelemetry-collector:
+  enabled: false
+  mode: deployment
+  image:
+    repository: docker.io/otel/opentelemetry-collector-contrib
+    tag: "0.140.0"
+  command:
+    name: otelcol-contrib
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: '${env:MY_POD_IP}:4317'
+          http:
+            cors:
+              allowed_origins:
+                - "*"
+    exporters:
+      # NOTE: Prior to v0.86.0 use `logging` instead of `debug`.
+      zipkin:
+        endpoint: "http://rag-zipkin:9411/api/v2/spans"
+      debug:
+        verbosity: detailed
+      prometheus:
+        endpoint: ${env:MY_POD_IP}:8889
+    extensions:
+      health_check: {}
+      zpages:
+        endpoint: 0.0.0.0:55679
+    processors:
+      batch: {}
+      tail_sampling:
+        # filter out health checks
+        # https://github.com/open-telemetry/opentelemetry-collector/issues/2310#issuecomment-1268157484
+        policies:
+          - name: drop_noisy_traces_url
+            type: string_attribute
+            string_attribute:
+              key: http.target
+              values:
+                - \/health
+              enabled_regex_matching: true
+              invert_match: true
+      transform:
+        trace_statements:
+          - context: span
+            statements:
+              - set(status.code, 1) where attributes["http.path"] == "/health"
+
+              # after the http target has been anonymized, replace other aspects of the span
+              - replace_match(attributes["http.route"], "/v1", attributes["http.target"]) where attributes["http.target"] != nil
+
+              # replace the title of the span with the route to be more descriptive
+              - replace_pattern(name, "/v1", attributes["http.route"]) where attributes["http.route"] != nil
+
+              # set the route to equal the URL if it's nondescriptive (for the embedding case)
+              - set(name, Concat([name, attributes["http.url"]], " ")) where name == "POST"
+    service:
+      extensions: [zpages, health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug, zipkin]
+          processors: [tail_sampling, transform]
+        metrics:
+          exporters:
+            - debug
+            - prometheus
+          processors:
+            - memory_limiter
+            - batch
+          receivers:
+            - otlp
+            - prometheus
+        logs:
+          receivers: [otlp]
+          exporters: [debug]
+          processors: [batch]
+  ports:
+    metrics:
+      enabled: true
+      containerPort: 8889
+      servicePort: 8889
+      protocol: TCP
+
+# subsection: zipkin
+zipkin:
+  enabled: false
+  image:
+    repository: docker.io/openzipkin/zipkin
+    tag: 3.5.0
+
+# subsection: kube-prometheus-stack
+kube-prometheus-stack:
+  enabled: false
+  prometheus-node-exporter:
+    service:
+      port: 9100
+      targetPort: 9100
+    hostNetwork: false
+  prometheus:
+    serviceMonitor:
+      interval: "1s"
+    prometheusSpec:
+      scrapeInterval: "1s"
+      evaluationInterval: "1s"
+      additionalScrapeConfigs:
+        - job_name: rag-app
+          scrape_interval: 5s
+          metrics_path: /metrics
+          static_configs:
+            - targets:
+                # If the app is in another namespace, use rag-server.<namespace>.svc:8081
+                - rag-server:8081
+  grafana:
+    adminUser: admin
+    adminPassword: "admin"
+  prometheusOperator:
+    crds:
+      enabled: false
+
+# -- NIMs (dependencies) configuration
+# subsection: nim-llm
+# NIM LLM
+nimOperator:       
+  draResources:
+    enabled: false
+    name: "rag-claim"
+    type: "TimeSlicing"
+  nim-llm:
+    enabled: true
+    replicas: 1
+    # -- Annotations applied to NIM pods (propagated via NIMService.spec.podAnnotations).
+    # Useful for integrations like Runai fractional GPUs, e.g.:
+    #   podAnnotations:
+    #     gpu-fraction: "0.25"
+    #     gpu-fraction-num-devices: "1"
+    podAnnotations: {}
+    service:
+      name: "nim-llm"
+    image:
+      repository: nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b
+      pullPolicy: IfNotPresent
+      tag: "1.8.0"
+# -- To switch back to Llama 3.3 Nemotron Super 49B (single GPU), replace the image block above with:
+#    image:
+#      repository: nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b
+#      pullPolicy: IfNotPresent
+#      tag: "1.14.0"
+# -- and revert resources to 1 GPU and model engine to tensorrt_llm below.
+    resources:
+      limits:
+        nvidia.com/gpu: 2
+      requests:
+        nvidia.com/gpu: 2
+# -- To switch back to Llama 3.3 Nemotron Super 49B (single GPU), replace resources above with:
+#    resources:
+#      limits:
+#        nvidia.com/gpu: 1
+#      requests:
+#        nvidia.com/gpu: 1
+    nodeSelector: {}
+    tolerations: []
+    model:
+      engine: vllm
+      precision: "fp8"
+      tensorParallelism: "2"
+# -- To switch back to Llama 3.3 Nemotron Super 49B, replace the model block above with:
+#    model:
+#      engine: tensorrt_llm
+    storage:
+      pvc:
+        create: true
+        size: "120Gi"
+        volumeAccessMode: ReadWriteOnce
+        storageClass: ""
+      sharedMemorySizeLimit: "16Gi"
+#    draResources:
+#      - claimCreationSpec:
+#          devices:
+#            - name: nimllm-gpu
+#              count: 1
+#              deviceClassName: gpu.nvidia.com
+#              driverName: gpu.nvidia.com
+#              attributeSelectors:
+#                - key: driverVersion
+#                  op: GreaterThanOrEqual
+#                  value:
+#                    versionValue: "550.127.8"
+#              capacitySelectors:
+#                - key: memory
+#                  op: GreaterThanOrEqual
+#                  value: 40Gi
+    env:
+      - name: NIM_HTTP_API_PORT
+        value: "8000"
+      - name: NIM_TRITON_LOG_VERBOSE
+        value: "1"
+      - name: NIM_SERVED_MODEL_NAME
+        value: "nvidia/nemotron-3-super-120b-a12b"
+      - name: NIM_ENABLE_CHUNKED_PREFILL
+        value: "1"
+      - name: NCCL_NVLS_ENABLE
+        value: "0"
+      - name: VLLM_USE_FLASHINFER_MOE_FP8
+        value: "0"
+# -- To switch back to Llama 3.3 Nemotron Super 49B, replace NIM_SERVED_MODEL_NAME value above with:
+#        value: "nvidia/nemotron-3-super-120b-a12b"
+# -- and remove NIM_ENABLE_CHUNKED_PREFILL/NCCL_NVLS_ENABLE/VLLM_USE_FLASHINFER_MOE_FP8 entries.
+    expose:
+      service:
+        name: http
+        type: ClusterIP
+        port: 8000
+        grpcPort: 8001
+    startupProbe:
+      enabled: true
+      probe:
+        httpGet:
+          path: /v1/health/ready
+          port: 8000
+        initialDelaySeconds: 60
+        periodSeconds: 10
+        failureThreshold: 750
+        timeoutSeconds: 5
+
+# subsection: nvidia-nim-llama-nemotron-embed-1b-v2
+# NIM Text Embedding (disabled by default; VLM embedding is the default — see nvidia-nim-llama-nemotron-embed-vl-1b-v2 below)
+  nvidia-nim-llama-nemotron-embed-1b-v2:
+    enabled: false
+    replicas: 1
+    # -- Annotations applied to NIM pods (propagated via NIMService.spec.podAnnotations).
+    # See nim-llm.podAnnotations above for a Runai fractional GPU example.
+    podAnnotations: {}
+    service:
+      name: "nemotron-embedding-ms"
+    image:
+      repository: nvcr.io/nim/nvidia/llama-nemotron-embed-1b-v2
+      tag: "1.13.0"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+      requests:
+        nvidia.com/gpu: 1
+    storage:
+      pvc:
+        create: true
+        size: "50Gi"
+        volumeAccessMode: ReadWriteOnce
+        storageClass: ""
+    nodeSelector: {}
+    tolerations: []
+#    draResources:
+#      - resourceClaimName: rag-claim
+    env:
+      - name: NIM_HTTP_API_PORT
+        value: "8000"
+      - name: NIM_TRITON_LOG_VERBOSE
+        value: "1"
+      - name: OMP_NUM_THREADS
+        value: "1"
+      - name: NIM_TRITON_PERFORMANCE_MODE
+        value: "throughput"
+    expose:
+      service:
+        name: http
+        type: ClusterIP
+        port: 8000
+        grpcPort: 8001
+
+# subsection: nvidia-nim-llama-nemotron-embed-vl-1b-v2
+# NIM VLM Embedding (default embedding service; aligned with envVars.APP_EMBEDDINGS_SERVERURL)
+  nvidia-nim-llama-nemotron-embed-vl-1b-v2:
+    enabled: true
+    # -- Annotations applied to NIM pods (propagated via NIMService.spec.podAnnotations).
+    # See nim-llm.podAnnotations above for a Runai fractional GPU example.
+    podAnnotations: {}
+    service:
+      name: "nemotron-vlm-embedding-ms"
+    image:
+      repository: nvcr.io/nim/nvidia/llama-nemotron-embed-vl-1b-v2
+      tag: "1.12.0"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+      requests:
+        nvidia.com/gpu: 1
+    nodeSelector: {}
+    tolerations: []
+#    draResources:
+#      - resourceClaimName: rag-claim
+    storage:
+      pvc:
+        create: true
+        size: "50Gi"
+        volumeAccessMode: ReadWriteOnce
+        storageClass: ""
+    env:
+      - name: NIM_HTTP_API_PORT
+        value: "8000"
+      - name: NIM_TRITON_LOG_VERBOSE
+        value: "1"
+    expose:
+      service:
+        name: http
+        type: ClusterIP
+        port: 8000
+        grpcPort: 8001
+# subsection: text-reranking-nim
+# NIM Text Reranking
+  nvidia-nim-llama-nemotron-rerank-1b-v2:
+    enabled: true
+    replicas: 1
+    # -- Annotations applied to NIM pods (propagated via NIMService.spec.podAnnotations).
+    # See nim-llm.podAnnotations above for a Runai fractional GPU example.
+    podAnnotations: {}
+    service:
+      name: "nemotron-ranking-ms"
+    image:
+      repository: nvcr.io/nim/nvidia/llama-nemotron-rerank-1b-v2
+      tag: "1.10.0"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+      requests:
+        nvidia.com/gpu: 1
+    nodeSelector: {}
+    tolerations: []
+#    draResources:
+#      - resourceClaimName: rag-claim
+    storage:
+      pvc:
+        create: true
+        size: "50Gi"
+        volumeAccessMode: ReadWriteOnce
+        storageClass: ""
+    env: []
+    expose:
+      service:
+        name: http
+        type: ClusterIP
+        port: 8000
+        grpcPort: 8001
+
+# subsection: nvidia-nim-llama-nemotron-rerank-vl-1b-v2
+# NIM VLM Reranking
+  nvidia-nim-llama-nemotron-rerank-vl-1b-v2:
+    enabled: false
+    replicas: 1
+    # -- Annotations applied to NIM pods (propagated via NIMService.spec.podAnnotations).
+    # See nim-llm.podAnnotations above for a Runai fractional GPU example.
+    podAnnotations: {}
+    service:
+      name: "nemotron-ranking-vl-ms"
+    image:
+      repository: nvcr.io/nim/nvidia/llama-nemotron-rerank-vl-1b-v2
+      tag: "1.11.0"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+      requests:
+        nvidia.com/gpu: 1
+    nodeSelector: {}
+    tolerations: []
+#    draResources:
+#      - resourceClaimName: rag-claim
+    storage:
+      pvc:
+        create: true
+        size: "50Gi"
+        volumeAccessMode: ReadWriteOnce
+        storageClass: ""
+    env: []
+    expose:
+      service:
+        name: http
+        type: ClusterIP
+        port: 8000
+        grpcPort: 8001
+
+  # subsection: nim-vlm
+  # Nemotron Omni — used for generation.
+  nim-vlm:
+    enabled: false
+    replicas: 1
+    # -- Annotations applied to NIM pods (propagated via NIMService.spec.podAnnotations).
+    # See nim-llm.podAnnotations above for a Runai fractional GPU example.
+    podAnnotations: {}
+    service:
+      name: "nim-vlm"
+    image:
+      repository: nvcr.io/nim/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+      tag: "1.7.0-variant"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+      requests:
+        nvidia.com/gpu: 1
+    nodeSelector: {}
+    tolerations: []
+#    draResources:
+#      - resourceClaimName: rag-claim
+    storage:
+      pvc:
+        create: true
+        size: "50Gi"
+        volumeAccessMode: ReadWriteOnce
+        storageClass: ""
+    env: []
+    expose:
+      service:
+        name: http
+        type: ClusterIP
+        port: 8000
+        grpcPort: 8001
+
+  # subsection: nim-vlm-captioning
+  # Nemotron Nano 12B — used for image captioning.
+  nim-vlm-captioning:
+    enabled: false
+    replicas: 1
+    # -- Annotations applied to NIM pods (propagated via NIMService.spec.podAnnotations).
+    # See nim-llm.podAnnotations above for a Runai fractional GPU example.
+    podAnnotations: {}
+    service:
+      name: "nim-vlm-captioning"
+    image:
+      repository: nvcr.io/nim/nvidia/nemotron-nano-12b-v2-vl
+      tag: "1.6.0"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+      requests:
+        nvidia.com/gpu: 1
+    nodeSelector: {}
+    tolerations: []
+    storage:
+      pvc:
+        create: true
+        size: "50Gi"
+        volumeAccessMode: ReadWriteOnce
+        storageClass: ""
+    env: []
+    expose:
+      service:
+        name: http
+        type: ClusterIP
+        port: 8000
+        grpcPort: 8001
+
+# -- NV-Ingest dependency configuration
+# subsection: nv-ingest
+# NV-Ingest Service
+nv-ingest:
+  fullnameOverride: "rag-nv-ingest"
+  enabled: true
+  imagePullSecrets:
+    - name: "ngc-secret"
+  ngcApiSecret:
+    create: false
+  ngcImagePullSecret:
+    create: false
+  image:
+    repository: "nvcr.io/nvidia/nemo-microservices/nv-ingest"
+    tag: "26.3.0"
+  resources:
+    limits:
+      nvidia.com/gpu: 0
+  envVars:
+    ARROW_DEFAULT_MEMORY_POOL: "system"
+    OMP_NUM_THREADS: "1"
+    INGEST_LOG_LEVEL: WARNING
+    INGEST_RAY_LOG_LEVEL: "PRODUCTION"
+    INGEST_DYNAMIC_MEMORY_THRESHOLD: "0.80"
+    INGEST_DISABLE_DYNAMIC_SCALING: "True"
+    NV_INGEST_MAX_UTIL: 48
+    INGEST_EDGE_BUFFER_SIZE: 64
+    MRC_IGNORE_NUMA_CHECK: 1
+    READY_CHECK_ALL_COMPONENTS: "False"
+    REDIS_MORPHEUS_TASK_QUEUE: morpheus_task_queue
+    REDIS_INGEST_TASK_QUEUE: "ingest_task_queue"
+    NV_INGEST_DEFAULT_TIMEOUT_MS: "1234"
+    MAX_INGEST_PROCESS_WORKERS: 16
+    VLM_CAPTION_PROMPT: "Caption the content of this image"
+    
+    # Ray internals configuration
+    RAY_num_grpc_threads: "1"
+    RAY_num_server_call_thread: "1"
+    RAY_worker_num_grpc_internal_threads: "1"
+    REDIS_POOL_SIZE: "50"
+    
+    APP_EMBEDDINGS_SERVERURL: "nemotron-vlm-embedding-ms:8000/v1"
+    APP_EMBEDDINGS_MODELNAME: "nvidia/llama-nemotron-embed-vl-1b-v2"
+    EMBEDDING_NIM_ENDPOINT: "http://nemotron-vlm-embedding-ms:8000/v1"
+    EMBEDDING_NIM_MODEL_NAME: "nvidia/llama-nemotron-embed-vl-1b-v2"
+    MESSAGE_CLIENT_HOST: "rag-redis-master"
+    MESSAGE_CLIENT_PORT: 6379
+    MESSAGE_CLIENT_TYPE: "redis"
+    MINIO_INTERNAL_ADDRESS: "rag-seaweedfs-all-in-one:9010"
+    MINIO_PUBLIC_ADDRESS: "http://rag-seaweedfs-all-in-one:9010"
+    MINIO_BUCKET: "nv-ingest"
+    MINIO_ACCESS_KEY: "seaweedfsadmin"
+    MINIO_SECRET_KEY: "seaweedfsadmin"
+    OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+    MODEL_PREDOWNLOAD_PATH: "/workspace/models/"
+    INSTALL_AUDIO_EXTRACTION_DEPS: "true"
+    COMPONENTS_TO_READY_CHECK: "ALL"
+
+    # OCR routing (nemotron-ocr-v1 service; use OCR_MODEL_NAME "pipeline" for Nemotron OCR)
+    OCR_GRPC_ENDPOINT: nemotron-ocr-v1:8001
+    OCR_HTTP_ENDPOINT: http://nemotron-ocr-v1:8000/v1/infer
+    OCR_INFER_PROTOCOL: grpc
+    OCR_MODEL_NAME: pipeline
+
+    # Nemotron Parse (VLM text extraction)
+    NEMOTRON_PARSE_HTTP_ENDPOINT: http://nemotron-parse:8000/v1/chat/completions
+    NEMOTRON_PARSE_INFER_PROTOCOL: http
+    NEMOTRON_PARSE_MODEL_NAME: nvidia/nemotron-parse
+
+    # PDF splitting configuration
+    PDF_SPLIT_PAGE_COUNT: "32"
+
+    # YOLOX endpoints
+    YOLOX_PAGE_IMAGE_FORMAT: "JPEG"
+    YOLOX_GRPC_ENDPOINT: nemotron-page-elements-v3:8001
+    YOLOX_HTTP_ENDPOINT: http://nemotron-page-elements-v3:8000/v1/infer
+    YOLOX_INFER_PROTOCOL: grpc
+    YOLOX_GRAPHIC_ELEMENTS_GRPC_ENDPOINT: nemotron-graphic-elements-v1:8001
+    YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT: http://nemotron-graphic-elements-v1:8000/v1/infer
+    YOLOX_GRAPHIC_ELEMENTS_INFER_PROTOCOL: grpc
+    YOLOX_TABLE_STRUCTURE_GRPC_ENDPOINT: nemotron-table-structure-v1:8001
+    YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT: http://nemotron-table-structure-v1:8000/v1/infer
+    YOLOX_TABLE_STRUCTURE_INFER_PROTOCOL: grpc
+
+    # Captioning
+    VLM_CAPTION_MODEL_NAME: nvidia/nemotron-nano-12b-v2-vl
+    VLM_CAPTION_ENDPOINT: http://nim-vlm-captioning:8000/v1/chat/completions
+
+    # Audio service
+    AUDIO_GRPC_ENDPOINT: nv-ingest-riva-nim:50051
+    AUDIO_INFER_PROTOCOL: grpc
+
+  # NV-Ingest uses SeaweedFS via MINIO_* env vars for S3-compatible artifact storage.
+  milvusDeployed: false
+
+  # Redis Master
+  redis:
+    fullnameOverride: "rag-redis"
+    image:
+      repository: redis
+      tag: 8.2.1
+
+
+  # Ensure nv-ingest does not deploy its own observability components
+  otelDeployed: false
+  zipkinDeployed: false
+
+  nimOperator:
+    # Ensure nv-ingest does not deploy its own embedding NIM
+    embedqa:
+      enabled: false
+
+    # OCR NIM (26.3.0: key renamed from nemoretriever_ocr_v1 to ocr; image nemotron-ocr-v1)
+    # To use PaddleOCR instead, override the image and set OCR_MODEL_NAME to "paddle" in envVars
+    ocr:
+      enabled: true
+      storage:
+        pvc:
+          volumeAccessMode: "ReadWriteOnce"
+          storageClass: ""
+      tolerations: []
+      replicas: 1
+      image:
+        repository: nvcr.io/nim/nvidia/nemotron-ocr-v1
+        tag: "1.3.0"
+        pullSecrets:
+          - ngc-secret
+      env:
+        - name: OMP_NUM_THREADS
+          value: "8"
+        - name: NIM_HTTP_API_PORT
+          value: "8000"
+        - name: NIM_TRITON_LOG_VERBOSE
+          value: "1"
+        - name: NIM_TRITON_MAX_BATCH_SIZE
+          value: "32"
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+        requests:
+          nvidia.com/gpu: 1
+
+    # NIM Graphic Elements
+    graphic_elements:
+      enabled: true
+      storage:
+        pvc:
+          volumeAccessMode: "ReadWriteOnce"
+          storageClass: ""
+      tolerations: []
+      replicas: 1
+      image:
+        repository: nvcr.io/nim/nvidia/nemotron-graphic-elements-v1
+        tag: "1.8.0"
+      env:
+        - name: NIM_HTTP_API_PORT
+          value: "8000"
+        - name: NIM_TRITON_LOG_VERBOSE
+          value: "1"
+        - name: NIM_TRITON_RATE_LIMIT
+          value: "3"
+        - name: NIM_TRITON_MAX_BATCH_SIZE
+          value: "32"
+        - name: NIM_TRITON_CUDA_MEMORY_POOL_MB
+          value: "2048"
+        - name: OMP_NUM_THREADS
+          value: "1"
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+        requests:
+          nvidia.com/gpu: 1
+
+    # NIM Page Elements
+    page_elements:
+      enabled: true
+      storage:
+        pvc:
+          volumeAccessMode: "ReadWriteOnce"
+          storageClass: ""
+      tolerations: []
+      replicas: 1
+      image:
+        repository: nvcr.io/nim/nvidia/nemotron-page-elements-v3
+        tag: "1.8.0"
+      env:
+        - name: NIM_HTTP_API_PORT
+          value: "8000"
+        - name: NIM_TRITON_LOG_VERBOSE
+          value: "1"
+        - name: NIM_TRITON_MAX_BATCH_SIZE
+          value: "32"
+        - name: NIM_TRITON_CPU_THREADS_PRE_PROCESSOR
+          value: "2"
+        - name: NIM_TRITON_CPU_THREADS_POST_PROCESSOR
+          value: "1"
+        - name: OMP_NUM_THREADS
+          value: "2"
+        - name: NIM_ENABLE_OTEL
+          value: "0"
+        - name: NIM_OTEL_SERVICE_NAME
+          value: "page-elements"
+        - name: NIM_OTEL_TRACES_EXPORTER
+          value: "otlp"
+        - name: NIM_OTEL_METRICS_EXPORTER
+          value: "console"
+        - name: NIM_OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector:4318"
+        - name: NIM_ENABLE_OTEL
+          value: "true"
+        - name: TRITON_OTEL_URL
+          value: "http://otel-collector:4318/v1/traces"
+        - name: TRITON_OTEL_RATE
+          value: "1"
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+        requests:
+          nvidia.com/gpu: 1
+
+    # NIM Table Structure
+    table_structure:
+      enabled: true
+      storage:
+        pvc:
+          storageClass: ""
+          volumeAccessMode: "ReadWriteOnce"
+      tolerations: []
+      replicas: 1
+      image:
+        repository: nvcr.io/nim/nvidia/nemotron-table-structure-v1
+        tag: "1.8.0"
+      env:
+        - name: NIM_HTTP_API_PORT
+          value: "8000"
+        - name: NIM_TRITON_LOG_VERBOSE
+          value: "1"
+        - name: NIM_TRITON_RATE_LIMIT
+          value: "3"
+        - name: NIM_TRITON_MAX_BATCH_SIZE
+          value: "32"
+        - name: NIM_TRITON_CUDA_MEMORY_POOL_MB
+          value: "2048"
+        - name: OMP_NUM_THREADS
+          value: "1"
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+        requests:
+          nvidia.com/gpu: 1
+
+    # Nemotron Parse (VLM text extraction)
+    nemotron_parse:
+      enabled: false
+      storage:
+        pvc:
+          storageClass: ""
+          volumeAccessMode: "ReadWriteOnce"
+      nodeSelector: {}
+      tolerations: []
+      replicaCount: 1
+      image:
+        repository: nvcr.io/nim/nvidia/nemotron-parse
+        tag: "1.5.0"
+      env:
+        - name: NIM_HTTP_API_PORT
+          value: "8000"
+        - name: NIM_TRITON_LOG_VERBOSE
+          value: "1"
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+        requests:
+          nvidia.com/gpu: 1
+
+    # Riva NIM for Audio Transcription
+    audio:
+      enabled: false
+      authSecret: ngc-api
+      storage:
+        pvc:
+          create: true
+          storageClass: ""
+          size: "25Gi"
+          volumeAccessMode: "ReadWriteOnce"
+      nodeSelector: {}
+      tolerations: []
+      replicas: 1
+      image:
+        repository: nvcr.io/nim/nvidia/parakeet-1-1b-ctc-en-us
+        tag: "1.4.0"
+        pullSecrets:
+          - ngc-secret
+      env:
+        - name: NIM_TAGS_SELECTOR
+          value: "name=parakeet-1-1b-ctc-en-us,mode=ofl"
+        - name: NIM_TRITON_LOG_VERBOSE
+          value: "1"
+      expose:
+        service:
+          type: ClusterIP
+          name: http
+          port: 9000
+          grpcPort: 50051
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+        requests:
+          nvidia.com/gpu: 1

@@ -1,0 +1,31 @@
+apiVersion: v2
+appVersion: v2.6.0
+dependencies:
+- condition: nv-ingest.enabled
+  name: nv-ingest
+  repository: https://helm.ngc.nvidia.com/nvidia/nemo-microservices
+  version: 26.3.0
+- condition: seaweedfs.enabled
+  name: seaweedfs
+  repository: https://seaweedfs.github.io/seaweedfs/helm
+  version: 4.21.0
+- condition: eck-elasticsearch.enabled
+  name: eck-elasticsearch
+  repository: https://helm.elastic.co
+  version: 0.18.0
+- condition: zipkin.enabled
+  name: zipkin
+  repository: https://zipkin.io/zipkin-helm
+  version: 0.4.0
+- condition: opentelemetry-collector.enabled
+  name: opentelemetry-collector
+  repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+  version: 0.130.2
+- condition: kube-prometheus-stack.enabled
+  name: kube-prometheus-stack
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 76.3.0
+description: An end to end Helm chart for the NVIDIA RAG Blueprint
+name: nvidia-blueprint-rag
+type: application
+version: v2.6.0

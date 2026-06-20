@@ -1,0 +1,130 @@
+{{- $cfg := index .Values "ingestor-server" -}}
+{{- if $cfg.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $cfg.appName }}
+  labels:
+    {{- include "nvidia-blueprint-rag.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $cfg.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ $cfg.appName }}
+      app.kubernetes.io/component: ingestor-server
+      {{- include "nvidia-blueprint-rag.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app: {{ $cfg.appName }}
+        app.kubernetes.io/component: ingestor-server
+        {{- include "nvidia-blueprint-rag.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if $cfg.imagePullSecret.name }}
+      imagePullSecrets:
+        - name: {{ $cfg.imagePullSecret.name }}
+      {{- end }}
+      {{- if $cfg.nodeSelector }}
+      nodeSelector:
+{{ toYaml $cfg.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if $cfg.affinity }}
+      affinity:
+{{ toYaml $cfg.affinity | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ $cfg.appName }}
+          image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
+          imagePullPolicy: {{ $cfg.image.pullPolicy }}
+          command:
+          - "uvicorn"
+          - "nvidia_rag.ingestor_server.server:app"
+          - "--port"
+          - "8082"
+          - "--host"
+          - "0.0.0.0"
+          - "--workers"
+          - "{{ $cfg.server.workers }}"
+          ports:
+            - containerPort: 8082
+          {{- $eckCfg := index .Values "eck-elasticsearch" }}
+          {{- $vectorUser := index $cfg.envVars "APP_VECTORSTORE_USERNAME" }}
+          {{- $vectorPass := index $cfg.envVars "APP_VECTORSTORE_PASSWORD" }}
+          {{- $vectorApiKey := index $cfg.envVars "APP_VECTORSTORE_APIKEY" }}
+          {{- $vectorApiKeyId := index $cfg.envVars "APP_VECTORSTORE_APIKEY_ID" }}
+          {{- $vectorApiKeySecret := index $cfg.envVars "APP_VECTORSTORE_APIKEY_SECRET" }}
+          {{- $useElasticUserSecret := and $eckCfg.enabled (not $vectorUser) (not $vectorPass) (not $vectorApiKey) (not $vectorApiKeyId) (not $vectorApiKeySecret) }}
+          {{- $apiKeysSecretName := include "apiKeysSecretName" . }}
+          {{- $hasAnyKey := or .Values.apiKeysSecret.embeddingsApiKey .Values.apiKeysSecret.summaryLlmApiKey }}
+          {{- $shouldCreateSecret := and .Values.apiKeysSecret.create (not .Values.apiKeysSecret.existingSecret) $hasAnyKey }}
+          {{- $useExistingSecret := .Values.apiKeysSecret.existingSecret }}
+          {{- $hasApiKeys := or $shouldCreateSecret $useExistingSecret }}
+          {{- if or $cfg.envVars $hasApiKeys $useElasticUserSecret }}
+          env:
+          {{- if $cfg.envVars }}
+          {{- range $k, $v := $cfg.envVars }}
+          {{- if and $useElasticUserSecret (or (eq $k "APP_VECTORSTORE_USERNAME") (eq $k "APP_VECTORSTORE_PASSWORD")) }}
+          {{- else }}
+            - name: "{{ $k }}"
+              value: "{{ $v }}"
+          {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- if $useElasticUserSecret }}
+            - name: APP_VECTORSTORE_USERNAME
+              value: "elastic"
+            - name: APP_VECTORSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nvidia-blueprint-rag.elasticsearchUserSecretName" . }}
+                  key: elastic
+          {{- end }}
+          {{- if $hasApiKeys }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.embeddingsApiKey }}
+            - name: APP_EMBEDDINGS_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: APP_EMBEDDINGS_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.summaryLlmApiKey }}
+            - name: SUMMARY_LLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: SUMMARY_LLM_APIKEY
+          {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- if $cfg.livenessProbe }}
+          livenessProbe:
+{{ toYaml $cfg.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if $cfg.readinessProbe }}
+          readinessProbe:
+{{ toYaml $cfg.readinessProbe | nindent 12 }}
+          {{- end }}
+          {{- if $cfg.resources }}
+          resources:
+{{ toYaml $cfg.resources | nindent 12 }}
+          {{- end }}
+          {{- if $cfg.persistence.enabled }}
+          volumeMounts:
+            - name: ingestor-server-data
+              mountPath: {{ default $cfg.envVars.INGESTOR_SERVER_DATA_DIR $cfg.persistence.mountPath }}
+              {{- if $cfg.persistence.subPath }}
+              subPath: {{ $cfg.persistence.subPath }}
+              {{- end }}
+          {{- end }}
+      {{- if $cfg.persistence.enabled }}
+      volumes:
+        - name: ingestor-server-data
+          {{- if $cfg.persistence.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ $cfg.persistence.existingClaim }}
+          {{- else }}
+          persistentVolumeClaim:
+            claimName: {{ printf "%s-data" $cfg.appName }}
+          {{- end }}
+      {{- end }}
+{{- end }}

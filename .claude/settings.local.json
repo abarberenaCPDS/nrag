@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm exec *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(git -C /mnt/c/src/rag ls-files variables.env)"
+    ]
+  }
+}

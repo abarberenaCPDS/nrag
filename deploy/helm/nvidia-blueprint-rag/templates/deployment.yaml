@@ -1,0 +1,188 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nvidia-blueprint-rag.fullname" . }}
+  labels:
+    {{- include "nvidia-blueprint-rag.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "nvidia-blueprint-rag.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rag-server
+  template:
+    metadata:
+      labels:
+        {{- include "nvidia-blueprint-rag.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: rag-server
+    spec:
+      serviceAccountName: {{ include "nvidia-blueprint-rag.serviceAccountName" . }}
+      {{- if .Values.imagePullSecret.name }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret.name }}
+      {{- end }}
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+{{ toYaml .Values.affinity | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "nvidia-blueprint-rag.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+          - "uvicorn"
+          - "nvidia_rag.rag_server.server:app"
+          - "--port"
+          - "8081"
+          - "--host"
+          - "0.0.0.0"
+          - "--workers"
+          - "{{ .Values.server.workers }}"
+          ports:
+            - containerPort: 8081
+          {{- $eckCfg := index .Values "eck-elasticsearch" }}
+          {{- $vectorUser := index .Values.envVars "APP_VECTORSTORE_USERNAME" }}
+          {{- $vectorPass := index .Values.envVars "APP_VECTORSTORE_PASSWORD" }}
+          {{- $vectorApiKey := index .Values.envVars "APP_VECTORSTORE_APIKEY" }}
+          {{- $vectorApiKeyId := index .Values.envVars "APP_VECTORSTORE_APIKEY_ID" }}
+          {{- $vectorApiKeySecret := index .Values.envVars "APP_VECTORSTORE_APIKEY_SECRET" }}
+          {{- $useElasticUserSecret := and $eckCfg.enabled (not $vectorUser) (not $vectorPass) (not $vectorApiKey) (not $vectorApiKeyId) (not $vectorApiKeySecret) }}
+          env:
+          {{- if .Values.envVars }}
+          {{- range $k, $v := .Values.envVars }}
+          {{- if and $useElasticUserSecret (or (eq $k "APP_VECTORSTORE_USERNAME") (eq $k "APP_VECTORSTORE_PASSWORD")) }}
+          {{- else }}
+            - name: "{{ $k }}"
+              value: "{{ $v }}"
+          {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- if $useElasticUserSecret }}
+            - name: APP_VECTORSTORE_USERNAME
+              value: "elastic"
+            - name: APP_VECTORSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nvidia-blueprint-rag.elasticsearchUserSecretName" . }}
+                  key: elastic
+          {{- end }}
+            - name: NVIDIA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ngcApiSecret.name }}
+                  key: NVIDIA_API_KEY
+          {{- $apiKeysSecretName := include "apiKeysSecretName" . }}
+          {{- $hasAnyKey := or .Values.apiKeysSecret.llmApiKey .Values.apiKeysSecret.embeddingsApiKey .Values.apiKeysSecret.rankingApiKey .Values.apiKeysSecret.queryRewriterApiKey .Values.apiKeysSecret.filterExpressionGeneratorApiKey .Values.apiKeysSecret.vlmApiKey .Values.apiKeysSecret.summaryLlmApiKey .Values.apiKeysSecret.reflectionLlmApiKey .Values.apiKeysSecret.agenticPlannerLlmApiKey .Values.apiKeysSecret.agenticTaskLlmApiKey .Values.apiKeysSecret.agenticSeedGenLlmApiKey .Values.apiKeysSecret.agenticSynthesisLlmApiKey }}
+          {{- $shouldCreateSecret := and .Values.apiKeysSecret.create (not .Values.apiKeysSecret.existingSecret) $hasAnyKey }}
+          {{- $useExistingSecret := .Values.apiKeysSecret.existingSecret }}
+          {{- if or $shouldCreateSecret $useExistingSecret }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.llmApiKey }}
+            - name: APP_LLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: APP_LLM_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.embeddingsApiKey }}
+            - name: APP_EMBEDDINGS_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: APP_EMBEDDINGS_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.rankingApiKey }}
+            - name: APP_RANKING_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: APP_RANKING_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.queryRewriterApiKey }}
+            - name: APP_QUERYREWRITER_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: APP_QUERYREWRITER_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.filterExpressionGeneratorApiKey }}
+            - name: APP_FILTEREXPRESSIONGENERATOR_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: APP_FILTEREXPRESSIONGENERATOR_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.vlmApiKey }}
+            - name: APP_VLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: APP_VLM_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.summaryLlmApiKey }}
+            - name: SUMMARY_LLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: SUMMARY_LLM_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.reflectionLlmApiKey }}
+            - name: REFLECTION_LLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: REFLECTION_LLM_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.agenticPlannerLlmApiKey }}
+            - name: AGENTIC_PLANNER_LLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: AGENTIC_PLANNER_LLM_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.agenticTaskLlmApiKey }}
+            - name: AGENTIC_TASK_LLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: AGENTIC_TASK_LLM_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.agenticSeedGenLlmApiKey }}
+            - name: AGENTIC_SEED_GEN_LLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: AGENTIC_SEED_GEN_LLM_APIKEY
+          {{- end }}
+          {{- if or $useExistingSecret .Values.apiKeysSecret.agenticSynthesisLlmApiKey }}
+            - name: AGENTIC_SYNTHESIS_LLM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $apiKeysSecretName }}
+                  key: AGENTIC_SYNTHESIS_LLM_APIKEY
+          {{- end }}
+          {{- end }}
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+{{ toYaml .Values.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+{{ toYaml .Values.readinessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.resources }}
+          resources:
+{{ toYaml .Values.resources | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: prompt-volume
+              mountPath: /prompt.yaml
+              subPath: prompt.yaml
+      volumes:
+        - name: prompt-volume
+          configMap:
+            name: {{ include "nvidia-blueprint-rag.fullname" . }}-prompt
+            defaultMode: 0555

@@ -1,0 +1,155 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+:orphan:
+# NVIDIA RAG Blueprint Documentation
+
+Welcome to the NVIDIA RAG Blueprint documentation. 
+You can learn more here, including how to get started with the RAG Blueprint, how to customize the RAG Blueprint, and how to troubleshoot the RAG Blueprint.
+
+- To view this documentation on docs.nvidia.com, browse to [NVIDIA RAG Blueprint Documentation](https://docs.nvidia.com/rag/latest/index.html).
+- To view this documentation on GitHub, browse to [NVIDIA RAG Blueprint Documentation](https://github.com/NVIDIA-AI-Blueprints/rag/blob/main/docs/readme.md).
+
+
+## Release Notes
+
+For the release notes, refer to [Release Notes](release-notes.md).
+
+
+## Support Matrix
+
+For hardware requirements and other information, refer to the [Support Matrix](support-matrix.md).
+
+
+## Get Started With RAG Blueprint
+
+- Use the procedures in [Get Started](deploy-docker-self-hosted.md) to get started quickly with the NVIDIA RAG Blueprint.
+- Experiment and test in the [Web User Interface](user-interface.md).
+- [Use the Python Package](python-client.md) to interact with the RAG.
+- Explore the notebooks that demonstrate how to use the APIs. For details refer to [Notebooks](notebooks.md).
+- Explore agentic use cases by following [example integrations](https://github.com/NVIDIA-AI-Blueprints/rag/tree/main/examples/) with NeMo Agent Toolkit and MCP server.
+
+
+
+## Deployment Options for RAG Blueprint
+
+You can deploy the RAG Blueprint with Docker, Helm, or NIM Operator, and target dedicated hardware or a Kubernetes cluster. 
+Use the following documentation to deploy the blueprint.
+
+:::{important}
+Before you deploy, consider the following:
+
+- Self-hosted deployments require ~200GB of free disk space for model downloads and caching.
+- First-time deployments take 15-30 minutes (Docker) or 60-70 minutes (Kubernetes) while large models are downloaded.
+- Model downloads do not show progress bars.
+- Subsequent deployments are much faster (2-15 minutes) because models are already cached.
+
+For monitoring deployment progress, refer to [Deploy on Kubernetes with Helm](./deploy-helm.md#verify-a-deployment).
+For detailed requirements, refer to [Support Matrix](support-matrix.md).
+:::
+
+- [Deploy with Docker (Self-Hosted Models)](deploy-docker-self-hosted.md)
+- [Deploy with Docker (NVIDIA-Hosted Models)](deploy-docker-nvidia-hosted.md)
+- [Deploy on Kubernetes with Helm](deploy-helm.md)
+- [Deploy on Kubernetes with Helm from the repository](deploy-helm-from-repo.md)
+- [Deploy on Kubernetes with Helm and MIG Support](mig-deployment.md)
+- [Deploy Retrieval-Only Mode](retrieval-only-deployment.md)
+
+**Alternative Deployment Options:**
+- [Use the Python Package (Library Mode)](python-client.md) — Use the NVIDIA RAG Python package directly for programmatic access to the RAG system.
+- [Containerless Deployment (Lite Mode)](https://github.com/NVIDIA-AI-Blueprints/rag/blob/main/notebooks/rag_library_lite_usage.ipynb) — A Python-only setup using Milvus Lite and NVIDIA cloud APIs without Docker containers.
+
+
+
+
+## Developer Guide
+
+After you deploy the RAG blueprint, you can customize it for your use cases.
+
+- Common configurations
+
+    - [Best Practices for Common Settings](accuracy_perf.md)
+    - [Agentic RAG](agentic-rag.md)
+    - [Change the LLM or Embedding Model](change-model.md)
+    - [Customize LLM Parameters at Runtime](llm-params.md)
+    - [Customize Prompts](prompt-customization.md)
+    - [Model Profiles for Hardware Configurations](model-profiles.md)
+    - [Multi-Collection Retrieval](multi-collection-retrieval.md)
+    - [Multi-Turn Conversation Support](multiturn.md)
+    - [Reasoning in Nemotron LLM model](enable-nemotron-thinking.md)
+    - [Self-reflection to improve accuracy](self-reflection.md)
+    - [Summarization](summarization.md)
+
+
+- Data Ingestion & Processing
+
+    - [Audio Ingestion Support](audio_ingestion.md)
+    - [Custom Metadata Support](custom-metadata.md)
+    - [File System Access to Extraction Results](mount-ingestor-volume.md)
+    - [Multimodal Retriever — VLM Embedding & VLM Reranker](multimodal-retriever.md)
+    - [OCR Configuration Guide](nemoretriever-ocr.md)
+    - [Enhanced PDF Extraction](nemotron-parse-extraction.md)
+    - [Text-Only Ingestion](text_only_ingest.md)
+    - [Data catalog for collections](data-catalog.md)
+    - [MCP Server Usage](mcp.md)
+
+
+
+- Vector Database and Retrieval
+
+    - [Change the Vector Database](change-vectordb.md)
+    - [Hybrid Search](hybrid_search.md)
+    - [Milvus Configuration](milvus-configuration.md)
+    - [Elasticsearch Configuration](elasticsearch-configuration.md)
+    - [Query Decomposition](query_decomposition.md)
+
+
+- Multimodal and Advanced Generation
+
+    - [Image captioning support for ingested documents](image_captioning.md)
+    - [Multimodal Query Support](multimodal-query.md)
+    - [VLM based inferencing in RAG](vlm.md)
+
+
+- Evaluation
+
+    - [Evaluate Your NVIDIA RAG Blueprint System](evaluate.md)
+    - [RAG Accuracy Benchmarks](accuracy-benchmarks.md)
+    - [Benchmark the Performance of Your RAG System](performance-benchmarking.md)
+
+
+- Governance
+
+    - [NeMo Guardrails for input/output](nemo-guardrails.md)
+
+
+- Observability and Telemetry
+
+    - [Observability](observability.md)
+    - [Query-to-Answer Pipeline](query-to-answer-pipeline.md)
+
+
+
+## Troubleshoot RAG Blueprint
+
+- [Troubleshoot](troubleshooting.md)
+- [RAG Pipeline Debugging Guide](debugging.md)
+- [Migrate from a Previous Version](migration_guide.md)
+
+
+
+## Reference
+
+- [Use the Python Package](python-client.md)
+- [Milvus Collection Schema Requirements](milvus-schema.md)
+- [Service Port and GPU Reference](service-port-gpu-reference.md)
+- [API - Ingestor Server Schema](https://github.com/NVIDIA-AI-Blueprints/rag/blob/main/docs/api_reference/openapi_schema_ingestor_server.json)
+- [API - RAG Server Schema](https://github.com/NVIDIA-AI-Blueprints/rag/blob/main/docs/api_reference/openapi_schema_rag_server.json)
+
+
+
+## Blog Posts
+
+- [NVIDIA NeMo Retriever Library Delivers Accurate Multimodal PDF Data Extraction 15x Faster](https://developer.nvidia.com/blog/nvidia-nemo-retriever-delivers-accurate-multimodal-pdf-data-extraction-15x-faster/)
+- [Finding the Best Chunking Strategy for Accurate AI Responses](https://developer.nvidia.com/blog/finding-the-best-chunking-strategy-for-accurate-ai-responses/)

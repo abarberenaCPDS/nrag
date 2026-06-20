@@ -1,0 +1,91 @@
+services:
+
+  # ChromaDB vector store
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb
+    ports:
+      - "8000:8000"
+    volumes:
+      - dotnet-chroma-data:/chroma/chroma
+    environment:
+      ANONYMIZED_TELEMETRY: "false"
+    healthcheck:
+      test: curl --fail http://localhost:8000/api/v2/heartbeat || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Ollama LLM + embedding server
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - dotnet-ollama-models:/root/.ollama
+    healthcheck:
+      test: ollama list || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # Pulls required models once on first startup, then exits
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: ollama-init
+    volumes:
+      - dotnet-ollama-models:/root/.ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: >
+      /bin/sh -c "
+        ollama pull ${OLLAMA_LLM_MODEL:-qwen2.5:3b} &&
+        ollama pull ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      "
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  # .NET RAG server (query / generation)
+  dotnet-rag-server:
+    container_name: dotnet-rag-server
+    build:
+      context: ../../
+      dockerfile: src/dotnet_rag/rag_server/Dockerfile
+    ports:
+      - "8081:8081"
+    env_file:
+      - dotnet-docker.env
+    depends_on:
+      chromadb:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  # .NET Ingestor server (document upload / embedding)
+  dotnet-ingestor-server:
+    container_name: dotnet-ingestor-server
+    build:
+      context: ../../
+      dockerfile: src/dotnet_rag/ingestor_server/Dockerfile
+    ports:
+      - "8082:8082"
+    env_file:
+      - dotnet-docker.env
+    depends_on:
+      chromadb:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+volumes:
+  dotnet-chroma-data:
+    name: dotnet-chroma-data
+  dotnet-ollama-models:
+    name: dotnet-ollama-models
+
+networks:
+  default:
+    name: dotnet-rag

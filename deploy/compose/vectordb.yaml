@@ -1,0 +1,147 @@
+services:
+
+  # Milvus can be made GPU accelerated by uncommenting the lines as specified below
+  milvus:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:${MILVUS_VERSION:-v2.6.5-gpu} # milvusdb/milvus:v2.6.5 for CPU
+    command: >
+      bash -lc 'tmpfile=$(mktemp) &&
+      sed -e "s/bucketName: a-bucket/bucketName: ${NVINGEST_OBJECTSTORE_BUCKET:-nv-ingest}/" -e "s/accessKeyID: minioadmin/accessKeyID: ${OBJECTSTORE_ACCESSKEY:-seaweedfsadmin}/" -e "s/secretAccessKey: minioadmin/secretAccessKey: ${OBJECTSTORE_SECRETKEY:-seaweedfsadmin}/" /milvus/configs/milvus.yaml > "$$tmpfile" &&
+      cat "$$tmpfile" > /milvus/configs/milvus.yaml &&
+      rm "$$tmpfile" &&
+      milvus run standalone'
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: seaweedfs:9010
+      KNOWHERE_GPU_MEM_POOL_SIZE: 2048;4096
+    volumes:
+      - rag-vol-milvus:/var/lib/milvus
+      # Uncomment below line to mount the configuration file
+      # - ${MILVUS_CONFIG_FILE:-./milvus.yaml}:/milvus/configs/milvus.yaml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "seaweedfs"
+    # Comment out this section if CPU based image is used and set below env variables to False
+    # export APP_VECTORSTORE_ENABLEGPUSEARCH=False
+    # export APP_VECTORSTORE_ENABLEGPUINDEX=False
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: ["gpu"]
+              # count: ${INFERENCE_GPU_COUNT:-all}
+              device_ids: ['${VECTORSTORE_GPU_DEVICE_ID:-0}']
+    profiles: ["milvus"]
+
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.6.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - rag-vol-etcd:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    profiles: ["milvus"]
+
+  seaweedfs:
+    container_name: seaweedfs
+    image: chrislusf/seaweedfs:3.73
+    environment:
+      MINIO_ACCESS_KEY: ${OBJECTSTORE_ACCESSKEY:-seaweedfsadmin}
+      MINIO_SECRET_KEY: ${OBJECTSTORE_SECRETKEY:-seaweedfsadmin}
+    ports:
+      - "9011:9011"
+      - "9010:9010"
+    volumes:
+      - rag-vol-seaweedfs:/data
+      - ./seaweedfs-config/s3.json:/etc/seaweedfs/s3.json:ro
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.port=9010
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -master.volumeSizeLimitMB=1024
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9010"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    profiles: ["", "milvus", "elasticsearch", "seaweedfs"]
+
+  elasticsearch:
+    container_name: elasticsearch
+    image: "docker.elastic.co/elasticsearch/elasticsearch:9.3.0"
+    ports:
+      - 9200:9200
+    volumes:
+      - rag-vol-elasticsearch:/usr/share/elasticsearch/data
+    restart: on-failure
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms1024m -Xmx1024m"
+      - xpack.security.enabled=false # Set to true to enable authentication
+      - xpack.license.self_generated.type=basic
+      - network.host=0.0.0.0
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      # Uncomment this line to use GPU for Elasticsearch
+      # - "vectors.indexing.use_gpu=true"
+      # Uncomment the line below to use the username and password environment variables
+      # - ELASTIC_USERNAME=${APP_VECTORSTORE_USERNAME}
+      # - ELASTIC_PASSWORD=${APP_VECTORSTORE_PASSWORD}
+    hostname: elasticsearch
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-f", "http://localhost:9200/_cat/health"]
+      # Uncomment the line below to use the username and password in healthcheck and comment out the line above
+      # test: ["CMD", "curl", "-s", "-f", "-u", "${APP_VECTORSTORE_USERNAME}:${APP_VECTORSTORE_PASSWORD}", "http://localhost:9200/_cat/health"]
+      interval: 10s
+      timeout: 1s
+      retries: 10
+    # Uncomment the lines below to use GPU for Elasticsearch
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           capabilities: ["gpu"]
+    #           # count: ${INFERENCE_GPU_COUNT:-all}
+    #           device_ids: ['${VECTORSTORE_GPU_DEVICE_ID:-0}']
+    profiles: ["", "elasticsearch"]
+
+# Per-service named Docker volumes — one per persisted data dir, all sharing the
+# `rag-vol-` prefix so they group cleanly under `docker volume ls --filter name=rag-vol-`.
+# These replace the legacy `deploy/compose/volumes/` host directory tree. Docker
+# auto-creates each volume on first `docker compose up`, so no host setup is needed.
+# See docs/troubleshooting.md ("Manage Persistent Data Volumes") for inspection,
+# backup, reset, and migration commands.
+volumes:
+  rag-vol-milvus:
+    name: rag-vol-milvus
+  rag-vol-etcd:
+    name: rag-vol-etcd
+  rag-vol-seaweedfs:
+    name: rag-vol-seaweedfs
+  rag-vol-elasticsearch:
+    name: rag-vol-elasticsearch
+
+networks:
+  default:
+    name: nvidia-rag

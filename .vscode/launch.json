@@ -1,0 +1,49 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Frontend: Chrome (Vite)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://127.0.0.1:3000",
+      "webRoot": "${workspaceFolder}/frontend",
+      "userDataDir": true,
+      "sourceMaps": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/frontend/**",
+        "!**/node_modules/**"
+      ]
+    },
+    {
+      "name": "Frontend: Edge (Vite)",
+      "type": "pwa-msedge",
+      "request": "launch",
+      "url": "http://127.0.0.1:3000",
+      "webRoot": "${workspaceFolder}/frontend",
+      "userDataDir": true,
+      "sourceMaps": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/frontend/**",
+        "!**/node_modules/**"
+      ]
+    },
+    {
+      "name": "Frontend: Attach Chrome",
+      "type": "pwa-chrome",
+      "request": "attach",
+      "port": 9222,
+      "urlFilter": "http://127.0.0.1:3000/*",
+      "webRoot": "${workspaceFolder}/frontend",
+      "sourceMaps": true
+    },
+    {
+      "name": "Frontend: Attach Edge",
+      "type": "pwa-msedge",
+      "request": "attach",
+      "port": 9222,
+      "urlFilter": "http://127.0.0.1:3000/*",
+      "webRoot": "${workspaceFolder}/frontend",
+      "sourceMaps": true
+    }
+  ]
+}

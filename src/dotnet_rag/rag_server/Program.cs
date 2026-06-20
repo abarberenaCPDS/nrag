@@ -1,0 +1,127 @@
+using System.Text.Json;
+using DotnetRag.Shared.Configuration;
+using DotnetRag.Shared.Extensions;
+using DotnetRag.Shared.Models;
+using DotnetRag.Shared.Options;
+using DotnetRag.Rag.Services;
+using Microsoft.OpenApi.Models;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
+    options.SerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower;
+});
+
+builder.Services.AddOptions<ModelOptions>()
+    .Bind(builder.Configuration.GetSection("Models"));
+builder.Services.AddOptions<TelemetryOptions>()
+    .Bind(builder.Configuration.GetSection("Telemetry"));
+
+var ragConfig = RagServerConfiguration.FromEnvironment();
+builder.Services.AddSingleton(ragConfig);
+
+builder.Logging.SetMinimumLevel(ragConfig.LogLevel.ToUpperInvariant() switch
+{
+    "DEBUG" or "NOTSET" => LogLevel.Debug,
+    "WARNING" or "WARN" => LogLevel.Warning,
+    "ERROR" => LogLevel.Error,
+    "CRITICAL" => LogLevel.Critical,
+    _ => LogLevel.Information
+});
+
+// Register Ollama + ChromaDB infrastructure (LLM, embeddings, vector store)
+builder.Services.AddRagInfrastructure(ragConfig);
+
+builder.Services.AddSingleton<RagService>();
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "APIs for NVIDIA RAG Server (v1)",
+        Version = "1.0.0",
+        Description = "This API schema describes all the retriever endpoints exposed for NVIDIA RAG server Blueprint."
+    });
+    options.SwaggerDoc("v2", new OpenApiInfo
+    {
+        Title = "APIs for NVIDIA RAG Server (v2) - OpenAI Compatible",
+        Version = "2.0.0",
+        Description = "OpenAI-compatible API endpoints for NVIDIA RAG server Blueprint."
+    });
+});
+
+var app = builder.Build();
+
+app.UseSwagger();
+app.UseSwaggerUI(options =>
+{
+    options.RoutePrefix = "swagger";
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "NVIDIA RAG API v1");
+    options.SwaggerEndpoint("/swagger/v2/swagger.json", "NVIDIA RAG API v2");
+});
+
+app.MapGet("/docs", () => Results.Redirect("/swagger"));
+app.MapGet("/openapi.json", () => Results.Redirect("/swagger/v1/swagger.json"));
+app.MapGet("/v1/docs", () => Results.Redirect("/swagger"));
+app.MapGet("/v1/openapi.json", () => Results.Redirect("/swagger/v1/swagger.json"));
+app.MapGet("/v2/docs", () => Results.Redirect("/swagger"));
+app.MapGet("/v2/openapi.json", () => Results.Redirect("/swagger/v2/swagger.json"));
+
+app.MapGet("/health", async (RagService service, bool check_dependencies = false) =>
+    Results.Ok(await service.HealthAsync(check_dependencies)))
+    .WithTags("Health APIs");
+app.MapGet("/v1/health", async (RagService service, bool check_dependencies = false) =>
+    Results.Ok(await service.HealthAsync(check_dependencies)))
+    .WithTags("Health APIs");
+
+app.MapGet("/configuration", (RagService service) => Results.Ok(service.GetConfiguration()))
+    .WithTags("Health APIs");
+app.MapGet("/v1/configuration", (RagService service) => Results.Ok(service.GetConfiguration()))
+    .WithTags("Health APIs");
+
+app.MapGet("/metrics", (RagService service) =>
+    Results.Text(service.GetMetrics(), "text/plain"))
+    .WithTags("Health APIs");
+app.MapGet("/v1/metrics", (RagService service) =>
+    Results.Text(service.GetMetrics(), "text/plain"))
+    .WithTags("Health APIs");
+
+app.MapPost("/generate", async (HttpRequest request, Prompt prompt, RagService service) =>
+    await service.GenerateAsync(request, prompt))
+    .WithTags("RAG APIs");
+app.MapPost("/v1/generate", async (HttpRequest request, Prompt prompt, RagService service) =>
+    await service.GenerateAsync(request, prompt))
+    .WithTags("RAG APIs");
+
+app.MapPost("/chat/completions", async (HttpRequest request, Prompt prompt, RagService service) =>
+    await service.GenerateAsync(request, prompt))
+    .WithTags("RAG APIs");
+app.MapPost("/v1/chat/completions", async (HttpRequest request, Prompt prompt, RagService service) =>
+    await service.GenerateAsync(request, prompt))
+    .WithTags("RAG APIs");
+
+app.MapPost("/search", async (HttpRequest request, DocumentSearch data, RagService service) =>
+    await service.SearchAsync(request, data))
+    .WithTags("Retrieval APIs");
+app.MapPost("/v1/search", async (HttpRequest request, DocumentSearch data, RagService service) =>
+    await service.SearchAsync(request, data))
+    .WithTags("Retrieval APIs");
+
+app.MapPost("/v2/vector_stores/{vector_store_id}/search",
+    async (HttpRequest request, string vector_store_id, VectorStoreSearchRequest search_request, RagService service) =>
+        await service.VectorStoreSearchAsync(request, vector_store_id, search_request))
+    .WithTags("Retrieval APIs");
+
+app.MapGet("/summary",
+    async (HttpRequest request, string collection_name, string file_name, RagService service, bool blocking = false, double timeout = 300) =>
+        await service.GetSummaryAsync(request, collection_name, file_name, blocking, timeout))
+    .WithTags("Retrieval APIs");
+app.MapGet("/v1/summary",
+    async (HttpRequest request, string collection_name, string file_name, RagService service, bool blocking = false, double timeout = 300) =>
+        await service.GetSummaryAsync(request, collection_name, file_name, blocking, timeout))
+    .WithTags("Retrieval APIs");
+
+app.Run();
