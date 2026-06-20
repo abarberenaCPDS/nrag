@@ -5,7 +5,7 @@
       "name": "Frontend: Chrome (Vite)",
       "type": "pwa-chrome",
       "request": "launch",
-      "url": "http://127.0.0.1:3000",
+      "url": "http://localhost:3000",
       "webRoot": "${workspaceFolder}/frontend",
       "userDataDir": true,
       "sourceMaps": true,
@@ -18,7 +18,7 @@
       "name": "Frontend: Edge (Vite)",
       "type": "pwa-msedge",
       "request": "launch",
-      "url": "http://127.0.0.1:3000",
+      "url": "http://localhost:3000",
       "webRoot": "${workspaceFolder}/frontend",
       "userDataDir": true,
       "sourceMaps": true,
@@ -32,7 +32,7 @@
       "type": "pwa-chrome",
       "request": "attach",
       "port": 9222,
-      "urlFilter": "http://127.0.0.1:3000/*",
+      "urlFilter": "http://localhost:3000/*",
       "webRoot": "${workspaceFolder}/frontend",
       "sourceMaps": true
     },
@@ -41,9 +41,67 @@
       "type": "pwa-msedge",
       "request": "attach",
       "port": 9222,
-      "urlFilter": "http://127.0.0.1:3000/*",
+      "urlFilter": "http://localhost:3000/*",
       "webRoot": "${workspaceFolder}/frontend",
       "sourceMaps": true
+    },
+    {
+      "name": ".NET: RAG API",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build: rag_server",
+      "program": "${workspaceFolder}/src/dotnet_rag/rag_server/bin/Debug/net10.0/DotnetRag.Rag_Server.dll",
+      "cwd": "${workspaceFolder}/src/dotnet_rag/rag_server",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:8081"
+      }
+    },
+    {
+      "name": ".NET: Ingestor API",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build: ingestor_server",
+      "program": "${workspaceFolder}/src/dotnet_rag/ingestor_server/bin/Debug/net10.0/DotnetRag.Ingestor_Server.dll",
+      "cwd": "${workspaceFolder}/src/dotnet_rag/ingestor_server",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:8082"
+      }
+    },
+    {
+      "name": ".NET: Attach RAG API",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    },
+    {
+      "name": ".NET: Attach Ingestor API",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ],
+  "compounds": [
+    {
+      "name": ".NET: Both APIs",
+      "configurations": [
+        ".NET: RAG API",
+        ".NET: Ingestor API"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": ".NET: Attach Both APIs",
+      "configurations": [
+        ".NET: Attach RAG API",
+        ".NET: Attach Ingestor API"
+      ],
+      "stopAll": true
     }
   ]
 }
