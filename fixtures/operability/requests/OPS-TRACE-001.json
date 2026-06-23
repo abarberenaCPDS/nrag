@@ -1,0 +1,20 @@
+{
+  "method": "POST",
+  "path": "/generate",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Trace test request"
+      }
+    ],
+    "use_knowledge_base": false
+  },
+  "preconditions": [
+    "Tracing enabled in runtime config.",
+    "Exporter endpoint reachable (OTLP or configured backend)."
+  ]
+}

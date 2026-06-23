@@ -1,0 +1,27 @@
+{
+  "method": "POST",
+  "path": "/generate",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is this project and what are its two primary backend services?"
+      }
+    ],
+    "use_knowledge_base": true,
+    "enable_reranker": true,
+    "enable_citations": true,
+    "enable_query_rewriting": false,
+    "enable_filter_generator": false,
+    "enable_guardrails": false,
+    "enable_vlm_inference": false,
+    "vdb_top_k": 20,
+    "reranker_top_k": 5,
+    "collection_names": [
+      "multimodal_data"
+    ]
+  }
+}

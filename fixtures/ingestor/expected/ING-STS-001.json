@@ -1,0 +1,19 @@
+{
+  "status_code": 200,
+  "content_type": "application/json",
+  "assertions": [
+    {
+      "type": "json_field_exists",
+      "path": "$.state"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.result"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.nv_ingest_status"
+    }
+  ],
+  "notes": "Allowed states: PENDING, FINISHED, FAILED, UNKNOWN."
+}

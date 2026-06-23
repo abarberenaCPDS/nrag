@@ -1,0 +1,26 @@
+@DotnetRag_Reranker_Service_HostAddress = http://localhost:8083
+
+GET {{DotnetRag_Reranker_Service_HostAddress}}/health
+Accept: application/json
+
+###
+
+POST {{DotnetRag_Reranker_Service_HostAddress}}/v1/rerank
+Content-Type: application/json
+
+{
+  "query": "nvidia rag retrieval",
+  "top_k": 2,
+  "chunks": [
+    {
+      "id": "chunk-1",
+      "text": "This chunk describes nvidia rag architecture.",
+      "score": 0.62
+    },
+    {
+      "id": "chunk-2",
+      "text": "This chunk is unrelated.",
+      "score": 0.89
+    }
+  ]
+}

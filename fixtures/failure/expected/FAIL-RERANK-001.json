@@ -1,0 +1,25 @@
+{
+  "status_code": 200,
+  "content_type": "application/json",
+  "assertions": [
+    {
+      "type": "json_field_exists",
+      "path": "$.results"
+    },
+    {
+      "type": "json_field_type",
+      "path": "$.results",
+      "expected": "array"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.message"
+    },
+    {
+      "type": "json_field_equals",
+      "path": "$.message",
+      "expected": "Search completed."
+    }
+  ],
+  "notes": "Expected behavior: search succeeds using fallback ordering when reranker is unavailable."
+}

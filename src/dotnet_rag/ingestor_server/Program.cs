@@ -6,6 +6,8 @@ using DotnetRag.Shared.Extensions;
 using DotnetRag.Shared.Options;
 using Microsoft.OpenApi.Models;
 
+DotnetRagEnvironmentBootstrap.LoadSharedLocalEnvironment();
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.ConfigureHttpJsonOptions(options =>

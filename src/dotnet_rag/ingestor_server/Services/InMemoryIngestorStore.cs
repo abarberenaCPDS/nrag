@@ -209,6 +209,66 @@ public sealed class InMemoryIngestorStore
         return deleted;
     }
 
+    // Validates document metadata against the collection's registered schema.
+    // Returns a list of human-readable error messages; empty list means valid.
+    public List<string> ValidateDocumentMetadata(
+        string collectionName,
+        string documentName,
+        IReadOnlyDictionary<string, object?> metadata)
+    {
+        if (!_collections.TryGetValue(collectionName, out var collection))
+            return [];
+
+        var schema = collection.MetadataSchema;
+        if (schema.Count == 0) return [];
+
+        var errors = new List<string>();
+
+        foreach (var field in schema)
+        {
+            var name = field.TryGetValue("name", out var n) ? n?.ToString() : null;
+            if (string.IsNullOrEmpty(name)) continue;
+
+            var required = field.TryGetValue("required", out var r) && r is true or "true";
+            var expectedType = field.TryGetValue("type", out var t) ? t?.ToString() ?? "str" : "str";
+
+            if (!metadata.TryGetValue(name, out var value) || value is null)
+            {
+                if (required)
+                    errors.Add($"'{documentName}': required metadata field '{name}' is missing.");
+                continue;
+            }
+
+            var typeError = ValidateFieldType(name, value, expectedType);
+            if (typeError is not null)
+                errors.Add($"'{documentName}': {typeError}");
+        }
+
+        return errors;
+    }
+
+    private static string? ValidateFieldType(string fieldName, object? value, string expectedType)
+    {
+        if (value is null) return null;
+
+        return expectedType.ToLowerInvariant() switch
+        {
+            "int" or "integer" => value is not (int or long or short or byte)
+                && !long.TryParse(value.ToString(), out _)
+                    ? $"field '{fieldName}' expected type int, got '{value.GetType().Name}'."
+                    : null,
+            "float" or "double" or "number" => value is not (float or double or decimal)
+                && !double.TryParse(value.ToString(), out _)
+                    ? $"field '{fieldName}' expected type float, got '{value.GetType().Name}'."
+                    : null,
+            "bool" or "boolean" => value is not bool
+                && !bool.TryParse(value.ToString(), out _)
+                    ? $"field '{fieldName}' expected type bool, got '{value.GetType().Name}'."
+                    : null,
+            _ => null // "str" and unknown types: accept any value
+        };
+    }
+
     public bool UpdateDocumentMetadata(
         string collectionName,
         string documentName,

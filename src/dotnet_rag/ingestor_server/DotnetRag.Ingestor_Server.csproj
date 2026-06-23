@@ -1,9 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
-  <ItemGroup>
-    <None Update="prompt.yaml">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\utils\DotnetRag.Shared.csproj" />
   </ItemGroup>

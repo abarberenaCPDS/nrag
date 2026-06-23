@@ -63,6 +63,8 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
+      dotnet-reranker-service:
+        condition: service_started
 
   # .NET Ingestor server (document upload / embedding)
   dotnet-ingestor-server:
@@ -77,6 +79,20 @@ services:
     depends_on:
       chromadb:
         condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  # .NET reranker service (internal ranking API)
+  dotnet-reranker-service:
+    container_name: dotnet-reranker-service
+    build:
+      context: ../../
+      dockerfile: src/dotnet_rag/reranker_service/Dockerfile
+    ports:
+      - "8083:8083"
+    env_file:
+      - dotnet-docker.env
+    depends_on:
       ollama:
         condition: service_healthy
 

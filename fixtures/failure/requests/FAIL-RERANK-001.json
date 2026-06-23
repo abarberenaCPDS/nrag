@@ -1,0 +1,21 @@
+{
+  "preconditions": [
+    "Start rag-server with reranker enabled.",
+    "Make reranker-service unavailable (stop container/process or set unreachable APP_RERANKER_SERVICE_URL)."
+  ],
+  "method": "POST",
+  "path": "/search",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "query": "Summarize the latest earnings highlights",
+    "collection_names": [
+      "multimodal_data"
+    ],
+    "vdb_top_k": 20,
+    "reranker_top_k": 5,
+    "enable_reranker": true,
+    "confidence_threshold": 0.1
+  }
+}

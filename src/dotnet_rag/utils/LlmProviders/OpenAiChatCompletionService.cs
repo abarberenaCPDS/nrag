@@ -56,11 +56,8 @@ public sealed class OpenAiChatCompletionService : IChatCompletionService
                 content = m.Content
             }).ToList(),
             ["stream"] = false,
-            // ORIG_LLM_TEMPERATURE: 0.0
-            ["temperature"] = 0.0,
-            // ORIG_LLM_TOP_P: 1.0
-            ["top_p"] = 1.0,
-            // ORIG_LLM_MAX_TOKENS: 16256
+            ["temperature"] = request.Temperature ?? 0.0,
+            ["top_p"] = request.TopP ?? 1.0,
             ["max_tokens"] = request.MaxTokens ?? 16256
         };
 

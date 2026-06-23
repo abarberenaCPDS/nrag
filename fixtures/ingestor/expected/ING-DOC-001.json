@@ -1,0 +1,30 @@
+{
+  "status_code": 200,
+  "content_type": "application/json",
+  "assertions": [
+    {
+      "type": "json_field_equals",
+      "path": "$.message",
+      "expected": "Document upload job successfully completed."
+    },
+    {
+      "type": "json_field_gte",
+      "path": "$.total_documents",
+      "expected": 1
+    },
+    {
+      "type": "json_field_gte",
+      "path": "$.documents_completed",
+      "expected": 0
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.documents"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.failed_documents"
+    }
+  ],
+  "notes": "Exact counts depend on file validity and collection setup."
+}

@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "path": "/health",
+  "query": {
+    "check_dependencies": true
+  },
+  "headers": {
+    "Accept": "application/json"
+  }
+}

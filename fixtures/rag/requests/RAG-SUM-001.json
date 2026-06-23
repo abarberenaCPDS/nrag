@@ -1,0 +1,13 @@
+{
+  "method": "GET",
+  "path": "/summary",
+  "query": {
+    "collection_name": "multimodal_data",
+    "file_name": "NVIDIA_Earnings_Report_Q4_2024.pdf",
+    "blocking": false,
+    "timeout": 60
+  },
+  "headers": {
+    "Accept": "application/json"
+  }
+}

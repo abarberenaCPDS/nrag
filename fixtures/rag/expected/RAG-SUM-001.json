@@ -1,0 +1,27 @@
+{
+  "status_code_allowed": [
+    200,
+    202,
+    404
+  ],
+  "content_type": "application/json",
+  "assertions": [
+    {
+      "type": "json_field_exists",
+      "path": "$.status"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.message"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.file_name"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.collection_name"
+    }
+  ],
+  "notes": "Canonical parity target should eventually normalize pending/timeout semantics across runtimes."
+}

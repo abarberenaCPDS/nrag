@@ -1,0 +1,20 @@
+{
+  "preconditions": [
+    "Start rag-server.",
+    "Set vector store endpoint to an unreachable host/port or stop vector store service."
+  ],
+  "method": "POST",
+  "path": "/search",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "query": "Find relevant text for parity failure test",
+    "collection_names": [
+      "multimodal_data"
+    ],
+    "vdb_top_k": 10,
+    "reranker_top_k": 5,
+    "enable_reranker": false
+  }
+}

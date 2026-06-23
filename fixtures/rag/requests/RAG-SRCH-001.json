@@ -1,0 +1,21 @@
+{
+  "method": "POST",
+  "path": "/search",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "query": "What are the key points in the most recent report?",
+    "messages": [],
+    "collection_names": [
+      "multimodal_data"
+    ],
+    "vdb_top_k": 20,
+    "reranker_top_k": 5,
+    "enable_reranker": true,
+    "enable_query_rewriting": false,
+    "enable_filter_generator": false,
+    "enable_citations": true,
+    "confidence_threshold": 0.1
+  }
+}

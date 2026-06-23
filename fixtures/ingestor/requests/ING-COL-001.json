@@ -1,0 +1,27 @@
+{
+  "method": "POST",
+  "path": "/collection",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "collection_name": "multimodal_data",
+    "description": "Parity test collection",
+    "tags": [
+      "parity",
+      "phase0"
+    ],
+    "owner": "parity-runner",
+    "created_by": "parity-runner",
+    "business_domain": "testing",
+    "status": "Active",
+    "metadata_schema": [
+      {
+        "name": "department",
+        "type": "string",
+        "description": "Owning department",
+        "required": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "status_code": 200,
+  "content_type": "application/json",
+  "assertions": [
+    {
+      "type": "json_field_equals",
+      "path": "$.message",
+      "expected": "Service is up."
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.databases"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.nim"
+    }
+  ],
+  "notes": "Dependency payload content may differ while parity work is in progress."
+}

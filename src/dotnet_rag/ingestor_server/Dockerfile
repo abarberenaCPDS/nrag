@@ -7,13 +7,13 @@ WORKDIR /src
 
 COPY src/dotnet_rag/Directory.Build.props src/dotnet_rag/DotnetRag.sln ./src/dotnet_rag/
 COPY src/dotnet_rag/utils/DotnetRag.Shared.csproj ./src/dotnet_rag/utils/
-COPY src/dotnet_rag/ingestor_server/DotnetRag.Ingestor.csproj ./src/dotnet_rag/ingestor_server/
+COPY src/dotnet_rag/ingestor_server/DotnetRag.Ingestor_Server.csproj ./src/dotnet_rag/ingestor_server/
 
-RUN dotnet restore ./src/dotnet_rag/ingestor_server/DotnetRag.Ingestor.csproj
+RUN dotnet restore ./src/dotnet_rag/ingestor_server/DotnetRag.Ingestor_Server.csproj
 
 COPY src/dotnet_rag ./src/dotnet_rag
 
-RUN dotnet publish ./src/dotnet_rag/ingestor_server/DotnetRag.Ingestor.csproj \
+RUN dotnet publish ./src/dotnet_rag/ingestor_server/DotnetRag.Ingestor_Server.csproj \
     -c Release \
     -o /app/publish \
     /p:UseAppHost=false
@@ -32,4 +32,4 @@ RUN useradd --create-home --uid 10001 appuser && \
 USER appuser
 EXPOSE 8082
 
-ENTRYPOINT ["dotnet", "DotnetRag.Ingestor.dll"]
+ENTRYPOINT ["dotnet", "DotnetRag.Ingestor_Server.dll"]

@@ -1,0 +1,20 @@
+{
+  "status_code": 200,
+  "content_type": "application/json",
+  "assertions": [
+    {
+      "type": "json_field_exists",
+      "path": "$.message"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.collection_name"
+    },
+    {
+      "type": "json_field_equals",
+      "path": "$.collection_name",
+      "expected": "multimodal_data"
+    }
+  ],
+  "notes": "Message may be 'created successfully' or 'already exists' depending on prior state."
+}

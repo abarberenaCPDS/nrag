@@ -6,10 +6,24 @@ This tree is the C#/.NET 10 migration target for `src/nvidia_rag`.
 
 - `ingestor_server/` — ingestion API and background-processing host
 - `rag_server/` — retrieval and answer-generation host
-- `utils/` — shared contracts, options, and future service adapters
+- `reranker_service/` — internal reranking microservice consumed by `rag_server`
+- `utils/` — shared contracts, options, and service adapters
 
 ## Current scaffold
 
-- ASP.NET Core service shells for the ingestor and RAG hosts
-- Shared abstractions for chat, embeddings, vector search, and runtime options
+- ASP.NET Core service shells for the ingestor, RAG, and reranker hosts
+- Shared abstractions for chat, embeddings, vector search, and rerank contracts
 - Local-first config stubs for Ollama, ChromaDB, and telemetry
+
+## Local dev config unification
+
+- All three services call a shared bootstrap (`DotnetRagEnvironmentBootstrap`) during startup.
+- Bootstrap loads `deploy/compose/dotnet-local.env` automatically (or `DOTNET_RAG_ENV_FILE` if set).
+- Existing process env vars still win over file values.
+- Set `DOTNET_RAG_SKIP_ENV_BOOTSTRAP=true` to disable this behavior.
+
+### Start all three services with one command
+
+```bash
+scripts/dotnet/run-local-all.sh
+```

@@ -1,0 +1,15 @@
+{
+  "status_code_allowed": [
+    500,
+    502,
+    503
+  ],
+  "content_type": "application/json",
+  "assertions": [
+    {
+      "type": "json_field_exists",
+      "path": "$.message"
+    }
+  ],
+  "notes": "Status code varies by runtime error mapping; message must indicate search/backend failure."
+}

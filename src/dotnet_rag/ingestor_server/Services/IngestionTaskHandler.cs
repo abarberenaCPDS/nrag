@@ -7,7 +7,7 @@ public sealed class IngestionTaskHandler
 {
     private readonly ConcurrentDictionary<string, IngestionTaskStatusResponse> _taskStates = new();
 
-    public async Task<string> SubmitTask(
+    public Task<string> SubmitTask(
         Func<string, Task<UploadDocumentResponse>> taskFactory,
         NvIngestStatusResponse initialNvIngestStatus,
         string? taskId = null)
@@ -23,31 +23,36 @@ public sealed class IngestionTaskHandler
             NvIngestStatus = initialNvIngestStatus
         };
 
-
-        try
+        // Fire and forget — returns the task ID immediately so the HTTP response
+        // is not blocked. State transitions (PENDING → FINISHED/FAILED) happen
+        // on the background thread and are visible via GET /status.
+        _ = Task.Run(async () =>
         {
-            var result = await taskFactory(resolvedTaskId);
-            _taskStates[resolvedTaskId] = new IngestionTaskStatusResponse
+            try
             {
-                State = "FINISHED",
-                Result = result,
-                NvIngestStatus = BuildNvIngestStatus(result)
-            };
-        }
-        catch (Exception ex)
-        {
-            _taskStates[resolvedTaskId] = new IngestionTaskStatusResponse
-            {
-                State = "FAILED",
-                Result = new UploadDocumentResponse
+                var result = await taskFactory(resolvedTaskId);
+                _taskStates[resolvedTaskId] = new IngestionTaskStatusResponse
                 {
-                    Message = ex.Message
-                },
-                NvIngestStatus = initialNvIngestStatus
-            };
-        }
+                    State = "FINISHED",
+                    Result = result,
+                    NvIngestStatus = BuildNvIngestStatus(result)
+                };
+            }
+            catch (Exception ex)
+            {
+                _taskStates[resolvedTaskId] = new IngestionTaskStatusResponse
+                {
+                    State = "FAILED",
+                    Result = new UploadDocumentResponse
+                    {
+                        Message = ex.Message
+                    },
+                    NvIngestStatus = initialNvIngestStatus
+                };
+            }
+        });
 
-        return resolvedTaskId;
+        return Task.FromResult(resolvedTaskId);
     }
 
     public IngestionTaskStatusResponse GetTaskStatusAndResult(string taskId)

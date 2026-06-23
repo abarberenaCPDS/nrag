@@ -1,0 +1,20 @@
+{
+  "status_code": 200,
+  "content_type": "application/json",
+  "assertions": [
+    {
+      "type": "json_field_exists",
+      "path": "$.task_id"
+    },
+    {
+      "type": "json_field_exists",
+      "path": "$.message"
+    },
+    {
+      "type": "json_field_contains",
+      "path": "$.message",
+      "expected_substring": "Ingestion started"
+    }
+  ],
+  "notes": "Parity target: request should return quickly with task id; current .NET implementation may still block."
+}

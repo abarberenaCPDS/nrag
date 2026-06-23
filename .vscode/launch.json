@@ -2,6 +2,66 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": ".NET: RAG API",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build: rag_server",
+      "program": "${workspaceFolder}/src/dotnet_rag/rag_server/bin/Debug/net10.0/DotnetRag.Rag_Server.dll",
+      "cwd": "${workspaceFolder}/src/dotnet_rag/rag_server",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:8081"
+      }
+    },
+    {
+      "name": ".NET: Ingestor API",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build: ingestor_server",
+      "program": "${workspaceFolder}/src/dotnet_rag/ingestor_server/bin/Debug/net10.0/DotnetRag.Ingestor_Server.dll",
+      "cwd": "${workspaceFolder}/src/dotnet_rag/ingestor_server",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:8082"
+      }
+    },
+    {
+      "name": ".NET: Reranker API",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build: reranker_service",
+      "program": "${workspaceFolder}/src/dotnet_rag/reranker_service/bin/Debug/net10.0/DotnetRag.Reranker_Service.dll",
+      "cwd": "${workspaceFolder}/src/dotnet_rag/reranker_service",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:8083"
+      }
+    },
+    {
+      "name": ".NET: Attach RAG API",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    },
+    {
+      "name": ".NET: Attach Ingestor API",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    },
+    {
+      "name": ".NET: Attach Reranker API",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    },
+    {
       "name": "Frontend: Chrome (Vite)",
       "type": "pwa-chrome",
       "request": "launch",
@@ -44,54 +104,32 @@
       "urlFilter": "http://localhost:3000/*",
       "webRoot": "${workspaceFolder}/frontend",
       "sourceMaps": true
-    },
-    {
-      "name": ".NET: RAG API",
-      "type": "coreclr",
-      "request": "launch",
-      "preLaunchTask": "build: rag_server",
-      "program": "${workspaceFolder}/src/dotnet_rag/rag_server/bin/Debug/net10.0/DotnetRag.Rag_Server.dll",
-      "cwd": "${workspaceFolder}/src/dotnet_rag/rag_server",
-      "stopAtEntry": false,
-      "console": "integratedTerminal",
-      "env": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_URLS": "http://localhost:8081"
-      }
-    },
-    {
-      "name": ".NET: Ingestor API",
-      "type": "coreclr",
-      "request": "launch",
-      "preLaunchTask": "build: ingestor_server",
-      "program": "${workspaceFolder}/src/dotnet_rag/ingestor_server/bin/Debug/net10.0/DotnetRag.Ingestor_Server.dll",
-      "cwd": "${workspaceFolder}/src/dotnet_rag/ingestor_server",
-      "stopAtEntry": false,
-      "console": "integratedTerminal",
-      "env": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_URLS": "http://localhost:8082"
-      }
-    },
-    {
-      "name": ".NET: Attach RAG API",
-      "type": "coreclr",
-      "request": "attach",
-      "processId": "${command:pickProcess}"
-    },
-    {
-      "name": ".NET: Attach Ingestor API",
-      "type": "coreclr",
-      "request": "attach",
-      "processId": "${command:pickProcess}"
     }
   ],
   "compounds": [
+    {
+      "name": ".NET: All Services",
+      "configurations": [
+        ".NET: RAG API",
+        ".NET: Ingestor API",
+        ".NET: Reranker API"
+      ],
+      "stopAll": true
+    },
     {
       "name": ".NET: Both APIs",
       "configurations": [
         ".NET: RAG API",
         ".NET: Ingestor API"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": ".NET: Attach All Services",
+      "configurations": [
+        ".NET: Attach RAG API",
+        ".NET: Attach Ingestor API",
+        ".NET: Attach Reranker API"
       ],
       "stopAll": true
     },

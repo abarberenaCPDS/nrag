@@ -21,6 +21,8 @@ public sealed class RagServerConfiguration
     public string RerankerModel { get; init; } = GetEnv("APP_RANKING_MODELNAME", "");
     // ORIG_RERANKER_ENDPOINT: nemotron-ranking-ms:8000
     public string RerankerEndpoint { get; init; } = GetEnv("APP_RANKING_SERVERURL", "");
+    public string RerankerServiceUrl { get; init; } = GetEnv("APP_RERANKER_SERVICE_URL", "http://localhost:8083");
+    public int RerankerServiceTimeoutSeconds { get; init; } = GetEnvInt("APP_RERANKER_SERVICE_TIMEOUT_SECONDS", 10);
     // ORIG_VLM_MODEL: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
     public string VlmModel { get; init; } = GetEnv("APP_VLM_MODELNAME", "");
     // ORIG_VLM_ENDPOINT: http://vlm-ms:8000/v1
@@ -56,6 +58,18 @@ public sealed class RagServerConfiguration
     public int SummarizerChunkOverlap { get; init; } = GetEnvInt("SUMMARIZER_CHUNK_OVERLAP", 200);
     public double SummarizerTemperature { get; init; } = GetEnvDouble("SUMMARIZER_TEMPERATURE", 0.1);
     public int SummarizerMaxParallelization { get; init; } = GetEnvInt("SUMMARIZER_MAX_PARALLELIZATION", 2);
+
+    public bool EnableReflection { get; init; } = GetEnvBool("ENABLE_REFLECTION", false);
+    public int ReflectionContextThreshold { get; init; } = GetEnvInt("REFLECTION_CONTEXT_THRESHOLD", 2);
+    public int ReflectionGroundednessThreshold { get; init; } = GetEnvInt("REFLECTION_GROUNDEDNESS_THRESHOLD", 2);
+    public int ReflectionMaxLoops { get; init; } = GetEnvInt("REFLECTION_MAX_LOOPS", 2);
+
+    public bool VlmToLlmFallback { get; init; } = GetEnvBool("VLM_TO_LLM_FALLBACK", true);
+    public int VlmMaxTotalImages { get; init; } = GetEnvInt("VLM_MAX_TOTAL_IMAGES", 10);
+
+    // Milvus-specific
+    public string MilvusToken { get; init; } = GetEnv("MILVUS_TOKEN", "");
+    public int EmbeddingDim { get; init; } = GetEnvInt("APP_EMBEDDINGS_DIM", 768);
 
     public bool FilterThinkTokens { get; init; } = GetEnvBool("FILTER_THINK_TOKENS", true);
     public int ConversationHistory { get; init; } = GetEnvInt("CONVERSATION_HISTORY", 0);

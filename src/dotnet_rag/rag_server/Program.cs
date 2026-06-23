@@ -2,9 +2,13 @@ using System.Text.Json;
 using DotnetRag.Shared.Configuration;
 using DotnetRag.Shared.Extensions;
 using DotnetRag.Shared.Models;
+using DotnetRag.Rag.Clients;
+using DotnetRag.Rag.Observability;
 using DotnetRag.Shared.Options;
 using DotnetRag.Rag.Services;
 using Microsoft.OpenApi.Models;
+
+DotnetRagEnvironmentBootstrap.LoadSharedLocalEnvironment();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,10 +35,22 @@ builder.Logging.SetMinimumLevel(ragConfig.LogLevel.ToUpperInvariant() switch
     _ => LogLevel.Information
 });
 
-// Register Ollama + ChromaDB infrastructure (LLM, embeddings, vector store)
+// Register Ollama + ChromaDB/Milvus infrastructure (LLM, embeddings, vector store)
 builder.Services.AddRagInfrastructure(ragConfig);
+builder.Services.AddHttpClient("reranker", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(ragConfig.RerankerServiceTimeoutSeconds);
+});
+builder.Services.AddSingleton<IRerankerClient, HttpRerankerClient>();
 
+builder.Services.AddSingleton<QueryRewritingService>();
+builder.Services.AddSingleton<ReflectionService>();
+builder.Services.AddSingleton<FilterExpressionService>();
+builder.Services.AddSingleton<RagMetrics>();
 builder.Services.AddSingleton<RagService>();
+
+// Observability: OpenTelemetry tracing + metrics, Prometheus scrape endpoint at /metrics
+builder.Services.AddRagObservability(ragConfig);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -54,6 +70,9 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var app = builder.Build();
+
+// Prometheus scrape endpoint — serves real metrics in Prometheus text format
+app.UseOpenTelemetryPrometheusScrapingEndpoint("/metrics");
 
 app.UseSwagger();
 app.UseSwaggerUI(options =>
@@ -82,11 +101,8 @@ app.MapGet("/configuration", (RagService service) => Results.Ok(service.GetConfi
 app.MapGet("/v1/configuration", (RagService service) => Results.Ok(service.GetConfiguration()))
     .WithTags("Health APIs");
 
-app.MapGet("/metrics", (RagService service) =>
-    Results.Text(service.GetMetrics(), "text/plain"))
-    .WithTags("Health APIs");
-app.MapGet("/v1/metrics", (RagService service) =>
-    Results.Text(service.GetMetrics(), "text/plain"))
+// /v1/metrics redirects to the OTel Prometheus scrape endpoint
+app.MapGet("/v1/metrics", () => Results.Redirect("/metrics"))
     .WithTags("Health APIs");
 
 app.MapPost("/generate", async (HttpRequest request, Prompt prompt, RagService service) =>

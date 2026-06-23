@@ -1,0 +1,25 @@
+{
+  "method": "POST",
+  "path": "/documents",
+  "headers": {
+    "Content-Type": "multipart/form-data"
+  },
+  "multipart": {
+    "form_field_data_json": {
+      "collection_name": "multimodal_data",
+      "blocking": true,
+      "custom_metadata": [],
+      "documents_catalog_metadata": [],
+      "generate_summary": false,
+      "enable_pdf_split_processing": false
+    },
+    "file_form_field_name": "documents",
+    "files": [
+      {
+        "path": "data/multimodal/NVIDIA_Earnings_Report_Q4_2024.pdf",
+        "required": false,
+        "note": "If unavailable, replace with any local .pdf/.txt fixture file."
+      }
+    ]
+  }
+}

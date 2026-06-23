@@ -1,0 +1,25 @@
+{
+  "status_code": 200,
+  "content_type": "text/event-stream",
+  "assertions": [
+    {
+      "type": "stream_event_present",
+      "contains": "\"choices\""
+    },
+    {
+      "type": "stream_event_present",
+      "contains": "\"finish_reason\":\"stop\""
+    },
+    {
+      "type": "stream_event_present",
+      "contains": "\"citations\""
+    },
+    {
+      "type": "no_error_status",
+      "allowed_status_codes": [
+        200
+      ]
+    }
+  ],
+  "notes": "Token text is non-deterministic; validate envelope and termination semantics."
+}

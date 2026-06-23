@@ -384,6 +384,17 @@ public sealed class IngestorService(
                 .FirstOrDefault(item => string.Equals(item.Filename, name, StringComparison.OrdinalIgnoreCase))
                 ?.Metadata ?? new Dictionary<string, object?>();
 
+            // Schema validation: warn on missing required fields or type mismatches
+            var schemaErrors = store.ValidateDocumentMetadata(resolvedCollection, name, metadata);
+            foreach (var error in schemaErrors)
+            {
+                duplicateValidationErrors.Add(new Dictionary<string, object?>
+                {
+                    ["error"] = error,
+                    ["metadata"] = new Dictionary<string, object?> { ["filename"] = name }
+                });
+            }
+
             var documentInfo = new Dictionary<string, object?>
             {
                 ["upload_path"] = path

@@ -1,0 +1,28 @@
+[
+  {
+    "Name": "RAG API",
+    "Projects": [
+      {
+        "Path": "rag_server\\DotnetRag.Rag_Server.csproj",
+        "Action": "Start"
+      }
+    ]
+  },
+  {
+    "Name": "All Services",
+    "Projects": [
+      {
+        "Path": "rag_server\\DotnetRag.Rag_Server.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "ingestor_server\\DotnetRag.Ingestor_Server.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "reranker_service\\DotnetRag.Reranker_Service.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

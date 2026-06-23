@@ -1,0 +1,13 @@
+test_case_id,domain,endpoint,scenario,request_path,expected_path,priority,status,owner,notes
+RAG-HEALTH-001,rag,GET /health,health basic,rag/requests/RAG-HEALTH-001.json,rag/expected/RAG-HEALTH-001.json,P1,dotnet_executed,,
+RAG-METRICS-001,rag,GET /metrics,metrics payload parity,rag/requests/RAG-METRICS-001.json,rag/expected/RAG-METRICS-001.txt,P1,dotnet_executed,,
+RAG-GEN-001,rag,POST /generate,generate text kb on reranker on,rag/requests/RAG-GEN-001.json,rag/expected/RAG-GEN-001.json,P0,dotnet_executed,,
+RAG-SRCH-001,rag,POST /search,search baseline,rag/requests/RAG-SRCH-001.json,rag/expected/RAG-SRCH-001.json,P0,dotnet_executed,,
+RAG-SUM-001,rag,GET /summary,summary immediate available,rag/requests/RAG-SUM-001.json,rag/expected/RAG-SUM-001.json,P1,dotnet_executed,,
+ING-DOC-001,ingestor,POST /documents,blocking upload success,ingestor/requests/ING-DOC-001.json,ingestor/expected/ING-DOC-001.json,P0,dotnet_executed,,
+ING-DOC-002,ingestor,POST /documents,non-blocking enqueue and status progression,ingestor/requests/ING-DOC-002.json,ingestor/expected/ING-DOC-002.json,P0,dotnet_executed,,
+ING-STS-001,ingestor,GET /status,status response schema,ingestor/requests/ING-STS-001.json,ingestor/expected/ING-STS-001.json,P1,dotnet_executed,,
+ING-COL-001,ingestor,POST /collection,create collection with metadata schema,ingestor/requests/ING-COL-001.json,ingestor/expected/ING-COL-001.json,P1,dotnet_executed,,
+FAIL-RERANK-001,failure,POST /search,reranker unavailable fallback behavior,failure/requests/FAIL-RERANK-001.json,failure/expected/FAIL-RERANK-001.json,P0,dotnet_executed,,
+FAIL-VDB-001,failure,POST /search,vector store unavailable,failure/requests/FAIL-VDB-001.json,failure/expected/FAIL-VDB-001.json,P0,dotnet_executed,,
+OPS-TRACE-001,operability,POST /generate,trace spans emitted,operability/requests/OPS-TRACE-001.json,operability/expected/OPS-TRACE-001.md,P1,dotnet_executed,,

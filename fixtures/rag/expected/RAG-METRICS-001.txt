@@ -1,0 +1,5 @@
+status_code=200
+content_type=text/plain
+assert_contains_any=rag_request_total|http_server_requests|python_gc_objects_collected_total
+assert_not_contains=metrics unavailable in scaffold
+notes=Current .NET implementation is expected to fail this fixture until real metrics are implemented.

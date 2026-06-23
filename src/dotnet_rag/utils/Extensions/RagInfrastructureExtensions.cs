@@ -56,9 +56,30 @@ public static class RagInfrastructureExtensions
             return new OllamaEmbeddingService(factory, model, baseUrl, logger);
         });
 
-        // Vector store — ChromaDB REST
+        // Vector store — ChromaDB or Milvus based on APP_VECTORSTORE_NAME
+        var storeName = config.VectorStoreName.Trim().ToLowerInvariant();
+        services.AddHttpClient("milvus");
         services.AddSingleton<ChromaDbVectorStore>();
-        services.AddSingleton<IVectorStore>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
+
+        if (storeName == "milvus")
+        {
+            services.AddSingleton<MilvusVectorStore>(sp =>
+            {
+                var logger = sp.GetRequiredService<ILogger<MilvusVectorStore>>();
+                var factory = sp.GetRequiredService<IHttpClientFactory>();
+                var embedder = sp.GetRequiredService<IEmbeddingService>();
+                return new MilvusVectorStore(
+                    factory, embedder, vectorStoreOpts,
+                    config.EmbeddingDim,
+                    string.IsNullOrWhiteSpace(config.MilvusToken) ? null : config.MilvusToken,
+                    logger);
+            });
+            services.AddSingleton<IVectorStore>(sp => sp.GetRequiredService<MilvusVectorStore>());
+        }
+        else
+        {
+            services.AddSingleton<IVectorStore>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
+        }
 
         // Chat completion service — Ollama or OpenAI-compatible depending on APP_LLM_PROVIDER
         var llmProvider = config.LlmProvider.Trim().ToLowerInvariant();
@@ -91,6 +112,19 @@ public static class RagInfrastructureExtensions
                     config.LlmEndpoint,
                     apiKey,
                     logger);
+            });
+        }
+
+        // VLM service — OpenAI-compatible multimodal endpoint (registered only when configured)
+        if (!string.IsNullOrWhiteSpace(config.VlmEndpoint) && !string.IsNullOrWhiteSpace(config.VlmModel))
+        {
+            services.AddKeyedSingleton<IChatCompletionService>("vlm", (sp, _) =>
+            {
+                var vlmLogger = sp.GetRequiredService<ILogger<OpenAiChatCompletionService>>();
+                var factory = sp.GetRequiredService<IHttpClientFactory>();
+                var apiKey = Environment.GetEnvironmentVariable("NVIDIA_API_KEY");
+                return new OpenAiChatCompletionService(
+                    factory, config.VlmModel, config.VlmEndpoint, apiKey, vlmLogger);
             });
         }
 
