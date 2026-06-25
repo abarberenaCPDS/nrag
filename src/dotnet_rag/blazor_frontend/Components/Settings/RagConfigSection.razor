@@ -1,0 +1,18 @@
+@inject SettingsState S
+
+<div class="settings-section">
+    <h2>RAG Configuration</h2>
+
+    <SettingsSlider Label="Temperature" Description="Controls response randomness. Lower values produce more deterministic responses."
+                    @bind-Value="S.Temperature" Min="0" Max="1" Step="0.1" />
+    <SettingsSlider Label="Top P" Description="Nucleus sampling probability mass. Controls diversity of responses."
+                    @bind-Value="S.TopP" Min="0" Max="1" Step="0.1" />
+    <SettingsNumber Label="Max Tokens" Description="Maximum number of tokens in the generated response."
+                    @bind-Value="S.MaxTokens" Min="1" Max="128000" />
+    <SettingsNumber Label="Vector DB Top K" Description="Number of chunks to retrieve from the vector store."
+                    @bind-Value="S.VdbTopK" Min="1" Max="400" />
+    <SettingsNumber Label="Reranker Top K" Description="Number of chunks to return after reranking."
+                    @bind-Value="S.RerankerTopK" Min="1" Max="50" />
+    <SettingsSlider Label="Confidence Score Threshold" Description="Minimum similarity score for retrieved chunks to be included."
+                    @bind-Value="S.ConfidenceThreshold" Min="0" Max="1" Step="0.05" />
+</div>

@@ -5,7 +5,7 @@
       "name": ".NET: RAG API",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build: rag_server",
+      "preLaunchTask": "build: solution",
       "program": "${workspaceFolder}/src/dotnet_rag/rag_server/bin/Debug/net10.0/DotnetRag.Rag_Server.dll",
       "cwd": "${workspaceFolder}/src/dotnet_rag/rag_server",
       "stopAtEntry": false,
@@ -19,7 +19,7 @@
       "name": ".NET: Ingestor API",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build: ingestor_server",
+      "preLaunchTask": "build: solution",
       "program": "${workspaceFolder}/src/dotnet_rag/ingestor_server/bin/Debug/net10.0/DotnetRag.Ingestor_Server.dll",
       "cwd": "${workspaceFolder}/src/dotnet_rag/ingestor_server",
       "stopAtEntry": false,
@@ -33,7 +33,7 @@
       "name": ".NET: Reranker API",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build: reranker_service",
+      "preLaunchTask": "build: solution",
       "program": "${workspaceFolder}/src/dotnet_rag/reranker_service/bin/Debug/net10.0/DotnetRag.Reranker_Service.dll",
       "cwd": "${workspaceFolder}/src/dotnet_rag/reranker_service",
       "stopAtEntry": false,
@@ -60,6 +60,65 @@
       "type": "coreclr",
       "request": "attach",
       "processId": "${command:pickProcess}"
+    },
+    {
+      "name": ".NET: Blazor Frontend",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build: solution",
+      "program": "${workspaceFolder}/src/dotnet_rag/blazor_frontend/bin/Debug/net10.0/DotnetRag.Blazor.dll",
+      "cwd": "${workspaceFolder}/src/dotnet_rag/blazor_frontend",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5154"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
+      }
+    },
+    {
+      "name": ".NET: AppHost (Aspire)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build: solution",
+      "program": "${workspaceFolder}/src/dotnet_rag/AppHost/bin/Debug/net10.0/DotnetRag.AppHost.dll",
+      "cwd": "${workspaceFolder}/src/dotnet_rag/AppHost",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
+      }
+    },
+    {
+      "name": ".NET: Attach Blazor Frontend",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    },
+    {
+      "name": "Blazor: Chrome",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:5154",
+      "webRoot": "${workspaceFolder}/src/dotnet_rag/blazor_frontend/wwwroot",
+      "userDataDir": true,
+      "sourceMaps": true
+    },
+    {
+      "name": "Blazor: Edge",
+      "type": "pwa-msedge",
+      "request": "launch",
+      "url": "http://localhost:5154",
+      "webRoot": "${workspaceFolder}/src/dotnet_rag/blazor_frontend/wwwroot",
+      "userDataDir": true,
+      "sourceMaps": true
     },
     {
       "name": "Frontend: Chrome (Vite)",
@@ -138,6 +197,35 @@
       "configurations": [
         ".NET: Attach RAG API",
         ".NET: Attach Ingestor API"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": ".NET: Blazor + Both APIs",
+      "configurations": [
+        ".NET: Blazor Frontend",
+        ".NET: RAG API",
+        ".NET: Ingestor API"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": ".NET: AppHost + Both APIs",
+      "configurations": [
+        ".NET: AppHost (Aspire)",
+        ".NET: RAG API",
+        ".NET: Ingestor API"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": ".NET: Full Stack (All Services)",
+      "configurations": [
+        ".NET: Blazor Frontend",
+        ".NET: RAG API",
+        ".NET: Ingestor API",
+        ".NET: Reranker API",
+        "Blazor: Chrome"
       ],
       "stopAll": true
     }

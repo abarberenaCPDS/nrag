@@ -9,12 +9,12 @@ POST {{DotnetRag_Reranker_Service_HostAddress}}/v1/rerank
 Content-Type: application/json
 
 {
-  "query": "nvidia rag retrieval",
+  "query": "rag retrieval",
   "top_k": 2,
   "chunks": [
     {
       "id": "chunk-1",
-      "text": "This chunk describes nvidia rag architecture.",
+      "text": "This chunk describes rag architecture.",
       "score": 0.62
     },
     {

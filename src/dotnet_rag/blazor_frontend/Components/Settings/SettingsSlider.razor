@@ -1,0 +1,34 @@
+<div class="settings-row">
+    <div>
+        <div class="settings-row-label">@Label</div>
+        @if (!string.IsNullOrEmpty(Description))
+        {
+            <div class="settings-row-desc">@Description</div>
+        }
+    </div>
+    <div class="settings-row-control" style="display:flex;align-items:center;gap:8px;">
+        <input type="range" min="@Min" max="@Max" step="@Step"
+               value="@Value"
+               @oninput="OnSliderInput"
+               style="accent-color:var(--accent);width:120px;" aria-label="@Label" />
+        <span style="min-width:40px;font-size:13px;color:var(--text);font-family:var(--font-mono);">@Value.ToString("F2")</span>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Description { get; set; } = "";
+    [Parameter] public double Value { get; set; }
+    [Parameter] public EventCallback<double> ValueChanged { get; set; }
+    [Parameter] public double Min { get; set; }
+    [Parameter] public double Max { get; set; } = 1;
+    [Parameter] public double Step { get; set; } = 0.01;
+
+    private Task OnSliderInput(ChangeEventArgs e)
+    {
+        var str = e.Value?.ToString();
+        var val = double.TryParse(str, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0;
+        return ValueChanged.InvokeAsync(val);
+    }
+}

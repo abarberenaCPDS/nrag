@@ -1,0 +1,53 @@
+@inject IJSRuntime JS
+
+<div class="message-row @Message.Role">
+    <div class="message-avatar @Message.Role" aria-hidden="true">
+        @(Message.Role == "assistant" ? "AI" : "U")
+    </div>
+    <div>
+        <div class="message-bubble @(Message.Role == "assistant" ? "assistant-bubble" : "") @(Message.IsError ? "error-bubble" : "")">
+            @if (Message.Images.Count > 0)
+            {
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+                    @foreach (var img in Message.Images)
+                    {
+                        <img src="@img.DataUri" alt="Attached image"
+                             style="max-width:200px;max-height:150px;border-radius:4px;border:1px solid var(--border);" />
+                    }
+                </div>
+            }
+            @if (Message.IsStreaming && string.IsNullOrEmpty(Message.Content))
+            {
+                <StreamingIndicator />
+            }
+            else
+            {
+                <div>@((MarkupString)RenderMarkdown(Message.Content))</div>
+            }
+        </div>
+
+        @if (Message.ReasoningSteps.Count > 0)
+        {
+            <ReasoningPanel Steps="Message.ReasoningSteps" />
+        }
+
+        @if (Message.Citations.Count > 0)
+        {
+            <button class="badge accent" style="margin-top:6px;cursor:pointer;"
+                    @onclick="() => OnCitationsClick.InvokeAsync(Message.Citations)">
+                @Message.Citations.Count source@(Message.Citations.Count == 1 ? "" : "s")
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ChatMessage Message { get; set; } = null!;
+    [Parameter] public EventCallback<List<Citation>> OnCitationsClick { get; set; }
+
+    private static string RenderMarkdown(string? md)
+    {
+        if (string.IsNullOrEmpty(md)) return "";
+        return Markdig.Markdown.ToHtml(md);
+    }
+}

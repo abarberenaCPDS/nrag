@@ -1,0 +1,12 @@
+@inject SettingsState S
+
+<div class="settings-section">
+    <h2>Feature Toggles</h2>
+
+    <SettingsToggle Label="Enable Reranker" Description="Use reranking to improve document relevance." @bind-Value="S.EnableReranker" />
+    <SettingsToggle Label="Include Citations" Description="Add source citations to responses." @bind-Value="S.EnableCitations" />
+    <SettingsToggle Label="Query Rewriting" Description="Rewrite user queries for better retrieval." @bind-Value="S.EnableQueryRewriting" />
+    <SettingsToggle Label="Use Guardrails" Description="Apply safety guardrails to responses." @bind-Value="S.EnableGuardrails" />
+    <SettingsToggle Label="VLM Inference" Description="Enable vision-language model inference." @bind-Value="S.EnableVlmInference" />
+    <SettingsToggle Label="Filter Generator" Description="Auto-generate filters from queries." @bind-Value="S.EnableFilterGenerator" />
+</div>

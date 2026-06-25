@@ -1,0 +1,12 @@
+@inject NotificationState NotifState
+@implements IDisposable
+
+<div class="health-dot @CssClass" title="@NotifState.HealthSummary"></div>
+
+@code {
+    private string CssClass => NotifState.HasHealthWarning ? "warning" : "";
+
+    protected override void OnInitialized() => NotifState.OnChange += HandleChange;
+    public void Dispose() => NotifState.OnChange -= HandleChange;
+    private async void HandleChange() => await InvokeAsync(StateHasChanged);
+}

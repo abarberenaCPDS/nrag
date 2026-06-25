@@ -1,0 +1,466 @@
+@inject IngestorApiService IngestorApi
+@inject RagApiService RagApi
+@inject CollectionsState ColState
+@inject NotificationState NotifState
+@implements IDisposable
+
+<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;justify-content:flex-end;"
+     @onclick="ColState.CloseDrawer">
+    <div style="width:420px;height:100%;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;"
+         @onclick:stopPropagation="true">
+
+        <!-- Header -->
+        <div style="padding:16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:600;font-size:15px;">@Collection.CollectionName</span>
+            <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:20px;line-height:1;" @onclick="ColState.CloseDrawer" aria-label="Close">×</button>
+        </div>
+
+        <div style="overflow-y:auto;flex:1;padding:16px;display:flex;flex-direction:column;gap:12px;">
+
+            <!-- Collection info card -->
+            <div style="background:var(--ground);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+                @if (!string.IsNullOrWhiteSpace(Collection.Description))
+                {
+                    <div style="font-weight:500;font-size:13px;">@Collection.Description</div>
+                }
+                @if (Collection.Tags?.Count > 0)
+                {
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                        @foreach (var tag in Collection.Tags)
+                        {
+                            <span style="border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:12px;color:var(--text);">@tag</span>
+                        }
+                    </div>
+                }
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:12px;color:var(--text-muted);">
+                    @if (Collection.Owner is { Length: > 0 } owner)
+                    {
+                        <span style="display:flex;align-items:center;gap:4px;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                            </svg>
+                            @owner
+                        </span>
+                    }
+                    @if (Collection.BusinessDomain is { Length: > 0 } domain)
+                    {
+                        <span style="display:flex;align-items:center;gap:4px;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
+                            </svg>
+                            @domain
+                        </span>
+                    }
+                    @if (Collection.Status is { Length: > 0 } collStatus)
+                    {
+                        var badgeColor = collStatus switch
+                        {
+                            "Active" => "#22c55e",
+                            "Archived" => "#f59e0b",
+                            "Deprecated" => "var(--error)",
+                            _ => "var(--text-muted)"
+                        };
+                        <span style="background:@badgeColor;color:#fff;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:500;">@collStatus</span>
+                    }
+                </div>
+                <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    @(_documents?.Count ?? Collection.NumEntities) files
+                </div>
+            </div>
+
+            <!-- Documents -->
+            @if (_documents is null)
+            {
+                <div class="text-muted" style="font-size:13px;">Loading…</div>
+            }
+            else
+            {
+                @foreach (var doc in _documents)
+                {
+                    var docName = doc.DocumentName;
+                    _summaries.TryGetValue(docName, out var docSummary);
+                    var docTags = GetDocTags(doc);
+                    var docDesc = GetDocDescription(doc);
+                    <div style="background:var(--ground);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;">
+                        <!-- Name row with action icons -->
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text-muted);" aria-hidden="true">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                            </svg>
+                            <span style="flex:1;font-size:13px;font-weight:500;word-break:break-all;">@docName</span>
+                            <button title="Edit metadata"
+                                    style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px;display:flex;align-items:center;border-radius:4px;"
+                                    @onclick="() => ToggleEdit(doc)">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                            </button>
+                            <button title="Delete document"
+                                    style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px;display:flex;align-items:center;border-radius:4px;"
+                                    @onclick="() => DeleteDocument(docName)">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <!-- Collection name subtitle -->
+                        <div style="font-size:11px;color:var(--text-muted);">@Collection.CollectionName</div>
+
+                        <!-- Doc tags -->
+                        @if (docTags.Count > 0)
+                        {
+                            <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                                @foreach (var dt in docTags)
+                                {
+                                    <span style="border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:11px;color:var(--text-muted);">@dt</span>
+                                }
+                            </div>
+                        }
+
+                        <!-- Summary -->
+                        @if (docSummary is not null)
+                        {
+                            if (docSummary.Status is "PENDING" or "IN_PROGRESS")
+                            {
+                                <div style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px;">
+                                    <div class="typing-indicator" style="transform:scale(0.65);transform-origin:left;">
+                                        <span></span><span></span><span></span>
+                                    </div>
+                                    Generating summary…
+                                </div>
+                            }
+                            else if (docSummary.Status == "SUCCESS" && !string.IsNullOrEmpty(docSummary.Summary))
+                            {
+                                var expanded = _expandedSummaries.Contains(docName);
+                                <div style="display:flex;align-items:flex-start;gap:4px;">
+                                    <p style="flex:1;margin:0;font-size:12px;line-height:1.5;color:var(--text-muted);
+                                              @(expanded ? "" : "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;")">
+                                        @docSummary.Summary
+                                    </p>
+                                    <button @onclick="() => ToggleSummary(docName)"
+                                            title="@(expanded ? "Collapse" : "Expand")"
+                                            style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px;flex-shrink:0;display:flex;align-items:center;">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+                                             style="transform:rotate(@(expanded ? "180deg" : "0deg"));transition:transform 0.15s;">
+                                            <polyline points="6 9 12 15 18 9"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            }
+                        }
+
+                        <!-- Inline edit form -->
+                        @if (_editingDoc == docName)
+                        {
+                            <div style="display:flex;flex-direction:column;gap:6px;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;">
+                                <input type="text" placeholder="Description" @bind="_editDesc"
+                                       style="width:100%;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box;" />
+                                @if (_editTags.Count > 0)
+                                {
+                                    <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                                        @foreach (var et in _editTags.ToList())
+                                        {
+                                            var etCopy = et;
+                                            <span style="display:inline-flex;align-items:center;gap:4px;background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;"
+                                                  @onclick="() => _editTags.Remove(etCopy)">
+                                                @etCopy <span style="color:var(--text-muted);">×</span>
+                                            </span>
+                                        }
+                                    </div>
+                                }
+                                <div style="display:flex;gap:6px;">
+                                    <input type="text" placeholder="Add tag…" @bind="_newDocTag" @bind:event="oninput"
+                                           @onkeydown="HandleDocTagKeyDown"
+                                           style="flex:1;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
+                                    <button @onclick="AddDocTag"
+                                            style="background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer;color:var(--text);font-size:13px;">Add</button>
+                                </div>
+                                <div style="display:flex;gap:6px;justify-content:flex-end;">
+                                    <button @onclick="() => _editingDoc = null"
+                                            style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;color:var(--text-muted);font-size:12px;">Cancel</button>
+                                    <button @onclick="() => SaveDocEdit(docName)"
+                                            style="background:var(--accent);border:none;border-radius:6px;padding:5px 12px;cursor:pointer;color:#000;font-size:12px;font-weight:500;">Save</button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (_documents.Count == 0)
+                {
+                    <div style="text-align:center;padding:16px 0;color:var(--text-muted);font-size:13px;">
+                        No documents yet. Use "Add Source" below to upload files.
+                    </div>
+                }
+            }
+
+            <!-- Add New Documents -->
+            <div class="divider"></div>
+            <span style="font-weight:500;font-size:13px;">Add New Documents</span>
+
+            <label style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--ground);border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:13px;color:var(--text-muted);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add files…
+                <InputFile OnChange="HandleFilesSelected" multiple
+                           accept=".pdf,.txt,.md,.docx,.csv,.json,.html,.htm"
+                           style="display:none;" />
+            </label>
+
+            @if (_addFiles.Count > 0)
+            {
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    @foreach (var (f, i) in _addFiles.Select((f, i) => (f, i)))
+                    {
+                        var idx = i;
+                        <div class="file-item">
+                            <span class="file-name">@f.Name</span>
+                            <button class="file-remove" @onclick="() => _addFiles.RemoveAt(idx)" aria-label="Remove @f.Name">✕</button>
+                        </div>
+                    }
+                </div>
+                <button style="width:100%;background:var(--accent);border:none;border-radius:6px;padding:8px;cursor:pointer;color:#000;font-weight:500;font-size:13px;"
+                        disabled="@_uploading"
+                        @onclick="UploadNewFiles">
+                    @if (_uploading) { <span>Uploading…</span> }
+                    else { <span>Upload @_addFiles.Count File@(_addFiles.Count == 1 ? "" : "s")</span> }
+                </button>
+            }
+        </div>
+
+        <!-- Footer -->
+        <div style="padding:16px;border-top:1px solid var(--border);">
+            <button style="width:100%;background:transparent;border:1px solid var(--error);color:var(--error);border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:500;"
+                    @onclick="DeleteCollection">Delete collection</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CollectionInfo Collection { get; set; } = null!;
+
+    private List<DocumentInfo>? _documents;
+    private readonly List<IBrowserFile> _addFiles = [];
+    private bool _uploading;
+
+    private readonly Dictionary<string, SummaryResponse?> _summaries = new();
+    private readonly Dictionary<string, Timer?> _summaryTimers = new();
+    private readonly HashSet<string> _expandedSummaries = [];
+
+    private string? _editingDoc;
+    private string _editDesc = "";
+    private string _newDocTag = "";
+    private readonly List<string> _editTags = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var result = await IngestorApi.GetDocumentsAsync(Collection.CollectionName, forceGetMetadata: true);
+        _documents = result.Documents;
+        foreach (var doc in _documents)
+            _ = FetchSummaryAsync(doc.DocumentName);
+    }
+
+    private async Task FetchSummaryAsync(string docName)
+    {
+        var resp = await RagApi.GetSummaryAsync(Collection.CollectionName, docName);
+        _summaries[docName] = resp;
+        await InvokeAsync(StateHasChanged);
+
+        if (resp?.Status is "PENDING" or "IN_PROGRESS")
+        {
+            _summaryTimers[docName]?.Dispose();
+            _summaryTimers[docName] = new Timer(
+                async _ =>
+                {
+                    var fresh = await RagApi.GetSummaryAsync(Collection.CollectionName, docName);
+                    _summaries[docName] = fresh;
+                    await InvokeAsync(StateHasChanged);
+                    if (fresh?.Status is not ("PENDING" or "IN_PROGRESS"))
+                    {
+                        _summaryTimers[docName]?.Dispose();
+                        _summaryTimers[docName] = null;
+                    }
+                },
+                null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+        }
+    }
+
+    private void ToggleSummary(string docName)
+    {
+        if (!_expandedSummaries.Remove(docName))
+            _expandedSummaries.Add(docName);
+    }
+
+    private static List<string> GetDocTags(DocumentInfo doc)
+    {
+        // DocumentInfoData = catalog metadata (description, tags set at upload time)
+        // Metadata = schema-defined custom fields
+        var source = doc.DocumentInfoData ?? doc.Metadata;
+        if (source?.TryGetValue("tags", out var t) == true
+            && t is System.Text.Json.JsonElement el
+            && el.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            return el.EnumerateArray()
+                .Select(x => x.GetString() ?? "")
+                .Where(s => s.Length > 0)
+                .ToList();
+        }
+        return [];
+    }
+
+    private static string GetDocDescription(DocumentInfo doc)
+    {
+        var source = doc.DocumentInfoData ?? doc.Metadata;
+        if (source?.TryGetValue("description", out var d) == true)
+        {
+            if (d is System.Text.Json.JsonElement de && de.ValueKind == System.Text.Json.JsonValueKind.String)
+                return de.GetString() ?? "";
+            return d?.ToString() ?? "";
+        }
+        return "";
+    }
+
+    private void ToggleEdit(DocumentInfo doc)
+    {
+        if (_editingDoc == doc.DocumentName)
+        {
+            _editingDoc = null;
+            return;
+        }
+        _editingDoc = doc.DocumentName;
+        _editDesc = GetDocDescription(doc);
+        _editTags.Clear();
+        _editTags.AddRange(GetDocTags(doc));
+        _newDocTag = "";
+    }
+
+    private void AddDocTag()
+    {
+        var tag = _newDocTag.Trim();
+        if (string.IsNullOrEmpty(tag) || _editTags.Contains(tag)) return;
+        _editTags.Add(tag);
+        _newDocTag = "";
+    }
+
+    private void HandleDocTagKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") AddDocTag();
+    }
+
+    private async Task SaveDocEdit(string docName)
+    {
+        var ok = await IngestorApi.UpdateDocumentMetadataAsync(
+            Collection.CollectionName, docName,
+            string.IsNullOrEmpty(_editDesc) ? null : _editDesc,
+            _editTags.Count > 0 ? _editTags : null);
+        _editingDoc = null;
+        if (ok)
+        {
+            var docs = await IngestorApi.GetDocumentsAsync(Collection.CollectionName, forceGetMetadata: true);
+            _documents = docs.Documents;
+            NotifState.AddToast($"Metadata updated for '{docName}'.", ToastSeverity.Success);
+        }
+        else
+        {
+            NotifState.AddToast("Failed to update metadata.", ToastSeverity.Error);
+        }
+        StateHasChanged();
+    }
+
+    private void HandleFilesSelected(InputFileChangeEventArgs e)
+    {
+        foreach (var file in e.GetMultipleFiles(20))
+            _addFiles.Add(file);
+        StateHasChanged();
+    }
+
+    private async Task UploadNewFiles()
+    {
+        _uploading = true;
+        StateHasChanged();
+
+        var uploadFiles = new List<UploadFile>();
+        foreach (var f in _addFiles)
+        {
+            try
+            {
+                using var ms = new MemoryStream();
+                await f.OpenReadStream(100 * 1024 * 1024).CopyToAsync(ms);
+                uploadFiles.Add(new UploadFile
+                {
+                    Name = f.Name,
+                    Size = f.Size,
+                    ContentType = f.ContentType,
+                    Data = ms.ToArray()
+                });
+            }
+            catch { }
+        }
+
+        var result = await IngestorApi.UploadDocumentsAsync(
+            Collection.CollectionName, uploadFiles, [], null, null, false);
+
+        _uploading = false;
+
+        if (result?.TaskId is not null)
+        {
+            var count = uploadFiles.Count;
+            _addFiles.Clear();
+            NotifState.AddToast($"Upload started for {count} file{(count == 1 ? "" : "s")}.", ToastSeverity.Success);
+            var docs = await IngestorApi.GetDocumentsAsync(Collection.CollectionName, forceGetMetadata: true);
+            _documents = docs.Documents;
+            foreach (var doc in _documents.Where(d => !_summaries.ContainsKey(d.DocumentName)))
+                _ = FetchSummaryAsync(doc.DocumentName);
+        }
+        else
+        {
+            NotifState.AddToast("Upload failed. Check the ingestor server.", ToastSeverity.Error);
+        }
+        StateHasChanged();
+    }
+
+    private async Task DeleteDocument(string docName)
+    {
+        var ok = await IngestorApi.DeleteDocumentsAsync(Collection.CollectionName, [docName]);
+        if (ok)
+        {
+            _documents?.RemoveAll(d => d.DocumentName == docName);
+            _summaryTimers.GetValueOrDefault(docName)?.Dispose();
+            _summaryTimers.Remove(docName);
+            _summaries.Remove(docName);
+            _expandedSummaries.Remove(docName);
+            NotifState.AddToast($"Deleted '{docName}'.", ToastSeverity.Success);
+        }
+        else
+        {
+            NotifState.AddToast($"Failed to delete '{docName}'.", ToastSeverity.Error);
+        }
+    }
+
+    private async Task DeleteCollection()
+    {
+        var ok = await IngestorApi.DeleteCollectionsAsync([Collection.CollectionName]);
+        ColState.CloseDrawer();
+        if (ok)
+        {
+            ColState.AllCollections.RemoveAll(c => c.CollectionName == Collection.CollectionName);
+            ColState.SelectedCollectionNames.Remove(Collection.CollectionName);
+            ColState.NotifyChange();
+            NotifState.AddToast($"Deleted collection '{Collection.CollectionName}'.", ToastSeverity.Success);
+        }
+        else
+        {
+            NotifState.AddToast($"Failed to delete collection '{Collection.CollectionName}'.", ToastSeverity.Error);
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (var t in _summaryTimers.Values) t?.Dispose();
+    }
+}

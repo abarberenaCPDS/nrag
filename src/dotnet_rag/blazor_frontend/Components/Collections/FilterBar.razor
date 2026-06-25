@@ -1,0 +1,63 @@
+@inject CollectionsState ColState
+@implements IDisposable
+
+<div class="filter-bar">
+    @foreach (var (f, i) in ColState.ActiveFilters.Select((f, i) => (f, i)))
+    {
+        <span class="filter-chip">
+            <span>@f.Field @f.Operator @f.Value</span>
+            <button @onclick="() => RemoveFilter(i)" aria-label="Remove filter">×</button>
+        </span>
+    }
+    <button style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px;color:var(--text-muted);cursor:pointer;"
+            @onclick="() => _showAdd = !_showAdd">+ Add filter</button>
+</div>
+
+@if (_showAdd)
+{
+    <div style="padding:8px 12px;border-top:1px solid var(--border-subtle);display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <input placeholder="Field" @bind="_field"
+               style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:100px;outline:none;" />
+        <select @bind="_op"
+                style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:12px;outline:none;">
+            @foreach (var o in _operators)
+            {
+                <option value="@o">@o</option>
+            }
+        </select>
+        <input placeholder="Value" @bind="_value"
+               style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:100px;outline:none;" />
+        <select @bind="_logicOp"
+                style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:12px;outline:none;">
+            <option>AND</option>
+            <option>OR</option>
+        </select>
+        <button style="background:var(--accent);border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;color:#000;font-weight:500;"
+                @onclick="AddFilter">Add</button>
+    </div>
+}
+
+@code {
+    private readonly string[] _operators = ["==", "!=", ">", "<", ">=", "<=", "in", "like", "before", "after"];
+    private string _field = "";
+    private string _op = "==";
+    private string _value = "";
+    private string _logicOp = "AND";
+    private bool _showAdd;
+
+    private void AddFilter()
+    {
+        if (string.IsNullOrWhiteSpace(_field)) return;
+        ColState.ActiveFilters.Add(new FilterCondition { Field = _field, Operator = _op, Value = _value, LogicalOp = _logicOp });
+        _field = ""; _value = ""; _showAdd = false;
+    }
+
+    private void RemoveFilter(int i)
+    {
+        ColState.ActiveFilters.RemoveAt(i);
+        ColState.NotifyChange();
+    }
+
+    protected override void OnInitialized() => ColState.OnChange += StateHasChanged;
+    public void Dispose() => ColState.OnChange -= StateHasChanged;
+}

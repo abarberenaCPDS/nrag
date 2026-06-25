@@ -1,0 +1,74 @@
+@inject SettingsState Settings
+
+<div style="display:flex;align-items:center;gap:6px;">
+    <!-- Workflow icon + "Pipeline:" label -->
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round"
+         style="color:var(--text-muted);flex-shrink:0;" aria-hidden="true">
+        <rect x="3" y="3" width="6" height="6" rx="1"/>
+        <rect x="15" y="3" width="6" height="6" rx="1"/>
+        <rect x="9" y="15" width="6" height="6" rx="1"/>
+        <path d="M6 9v3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V9"/>
+        <path d="M12 12v3"/>
+    </svg>
+    <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;">Pipeline:</span>
+
+    <!-- Dropdown trigger -->
+    <div style="position:relative;z-index:202;">
+        <button style="background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:3px;padding:0;color:var(--text);font-size:12px;font-weight:600;white-space:nowrap;"
+                @onclick="Toggle" aria-haspopup="listbox" aria-expanded="@_open"
+                aria-label="@($"Pipeline mode: {(_agenticMode ? "Agentic" : "Standard")}")">
+            @(_agenticMode ? "Agentic" : "Standard")
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+                 style="transition:transform 0.15s ease;transform:@(_open ? "rotate(180deg)" : "rotate(0deg)")">
+                <polyline points="6,9 12,15 18,9"/>
+            </svg>
+        </button>
+
+        @if (_open)
+        {
+            <div style="position:fixed;inset:0;z-index:200;" @onclick="Close"></div>
+            <div style="position:absolute;bottom:calc(100% + 8px);left:0;min-width:230px;
+                        background:var(--surface);border:1px solid var(--border);border-radius:8px;
+                        z-index:201;overflow:hidden;box-shadow:0 -4px 20px rgba(0,0,0,0.35);"
+                 role="listbox" @onclick:stopPropagation="true">
+                @foreach (var (agentic, label, desc) in _modes)
+                {
+                    var isActive = _agenticMode == agentic;
+                    <button style="width:100%;text-align:left;padding:10px 14px;border:none;cursor:pointer;
+                                   background:@(isActive ? "var(--ground)" : "transparent");
+                                   border-left:2px solid @(isActive ? "var(--accent)" : "transparent");"
+                            role="option" aria-selected="@isActive"
+                            @onclick="() => Select(agentic)">
+                        <div style="font-size:13px;font-weight:600;color:@(isActive ? "var(--accent)" : "var(--text)");">@label</div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">@desc</div>
+                    </button>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private bool _open;
+    private bool _agenticMode;
+
+    private static readonly (bool Agentic, string Label, string Desc)[] _modes =
+    [
+        (false, "Standard", "Standard RAG pipeline"),
+        (true,  "Agentic",  "LangGraph plan-and-execute"),
+    ];
+
+    protected override void OnInitialized() => _agenticMode = Settings.AgenticMode;
+
+    private void Toggle() => _open = !_open;
+    private void Close() => _open = false;
+
+    private void Select(bool agentic)
+    {
+        _agenticMode = agentic;
+        Settings.AgenticMode = agentic;
+        Settings.NotifyChange();
+        _open = false;
+    }
+}

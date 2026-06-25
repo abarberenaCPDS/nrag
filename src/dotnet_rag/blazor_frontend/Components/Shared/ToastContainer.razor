@@ -1,0 +1,20 @@
+@inject NotificationState NotifState
+@implements IDisposable
+
+<div class="toast-container" aria-live="polite" aria-atomic="false">
+    @foreach (var toast in NotifState.Toasts)
+    {
+        <div class="toast @toast.Severity.ToString().ToLower()" role="alert">
+            <span style="flex:1">@toast.Message</span>
+            <button onclick="@(() => NotifState.RemoveToast(toast.Id))"
+                    style="background:none;border:none;color:var(--text-muted);cursor:pointer;padding:0;font-size:16px;"
+                    aria-label="Dismiss">×</button>
+        </div>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized() => NotifState.OnChange += HandleChange;
+    public void Dispose() => NotifState.OnChange -= HandleChange;
+    private async void HandleChange() => await InvokeAsync(StateHasChanged);
+}

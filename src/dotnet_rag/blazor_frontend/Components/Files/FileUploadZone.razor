@@ -1,0 +1,59 @@
+@inject IJSRuntime JS
+
+<label for="file-zone-input"
+       class="file-upload-zone @(_dragging ? "drag-over" : "")"
+       @ondragover:preventDefault="true"
+       @ondragover="() => _dragging = true"
+       @ondragleave="() => _dragging = false"
+       @ondrop:preventDefault="true"
+       @ondrop="HandleDrop"
+       style="cursor:pointer;">
+    <div class="upload-icon" aria-hidden="true">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polyline points="16 16 12 12 8 16"/>
+            <line x1="12" y1="12" x2="12" y2="21"/>
+            <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+        </svg>
+    </div>
+    <p><span style="color:var(--accent);font-weight:500;">Choose files</span> or drag and drop them here.</p>
+    <p class="text-muted" style="font-size:11px;margin-top:6px;line-height:1.6;">
+        Accepted: .bmp, .docx, .html, .jpeg, .json, .md, .pdf, .png, .pptx, .sh, .tiff, .txt, .mp3, .wav, .mp4, .mov, .avi, .mkv<br/>
+        Up to 400 MB &bull; Max 100 files per batch
+    </p>
+    <InputFile OnChange="HandleFiles"
+               accept=".pdf,.docx,.pptx,.txt,.md,.json,.html,.png,.jpg,.jpeg,.bmp,.tiff,.mp3,.wav,.mp4,.mov,.avi,.mkv,.sh"
+               multiple id="file-zone-input" style="display:none;" />
+</label>
+
+@code {
+    [Parameter] public EventCallback<List<UploadFile>> OnFilesAdded { get; set; }
+
+    private bool _dragging;
+
+    private async Task HandleFiles(InputFileChangeEventArgs e)
+    {
+        _dragging = false;
+        var added = new List<UploadFile>();
+        foreach (var f in e.GetMultipleFiles(100))
+        {
+            using var ms = new MemoryStream();
+            await f.OpenReadStream(maxAllowedSize: 400 * 1024 * 1024).CopyToAsync(ms);
+            added.Add(new UploadFile
+            {
+                Name = f.Name,
+                Size = f.Size,
+                ContentType = f.ContentType,
+                Data = ms.ToArray()
+            });
+        }
+        await OnFilesAdded.InvokeAsync(added);
+    }
+
+    private async Task HandleDrop(DragEventArgs e)
+    {
+        _dragging = false;
+        // Blazor Server doesn't expose DataTransfer.Files from drop events;
+        // files arrive via the InputFile component when the label is clicked.
+        await Task.CompletedTask;
+    }
+}

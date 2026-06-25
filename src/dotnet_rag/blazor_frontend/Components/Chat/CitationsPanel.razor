@@ -1,0 +1,44 @@
+@inject CollectionsState ColState
+
+<div class="citations-panel" role="complementary" aria-label="Citations">
+    <div class="citations-panel-header">
+        <div>
+            <div style="font-weight:600;font-size:14px;">Source Citations</div>
+            <div style="font-size:12px;color:var(--text-muted);">@Citations.Count source@(Citations.Count == 1 ? "" : "s") found</div>
+        </div>
+        <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;"
+                @onclick="OnClose" aria-label="Close citations">×</button>
+    </div>
+    <div class="citations-list">
+        @foreach (var c in Citations)
+        {
+            <div class="citation-card">
+                <div class="citation-source">@(c.DocumentName ?? c.SourceName ?? "Unknown source")</div>
+                @if (c.Score.HasValue)
+                {
+                    <span class="citation-score">score @c.Score.Value.ToString("F3")</span>
+                }
+                @if (!string.IsNullOrWhiteSpace(c.CollectionName))
+                {
+                    <span class="badge" style="margin-left:4px">@c.CollectionName</span>
+                }
+                @if (!string.IsNullOrWhiteSpace(c.Content))
+                {
+                    <div class="citation-snippet">@c.Content</div>
+                }
+            </div>
+        }
+        @if (Citations.Count == 0)
+        {
+            <div style="padding:24px 16px;text-align:center;">
+                <div style="font-size:14px;font-weight:500;margin-bottom:8px;">No Citations Available</div>
+                <div class="text-muted" style="font-size:13px;">No sources were found for this response. Try enabling citations in settings or asking questions about your uploaded documents.</div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<Citation> Citations { get; set; } = [];
+    [Parameter] public EventCallback OnClose { get; set; }
+}

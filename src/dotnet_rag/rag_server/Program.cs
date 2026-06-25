@@ -1,12 +1,12 @@
-using System.Text.Json;
+using DotnetRag.Rag.Clients;
+using DotnetRag.Rag.Observability;
+using DotnetRag.Rag.Services;
 using DotnetRag.Shared.Configuration;
 using DotnetRag.Shared.Extensions;
 using DotnetRag.Shared.Models;
-using DotnetRag.Rag.Clients;
-using DotnetRag.Rag.Observability;
 using DotnetRag.Shared.Options;
-using DotnetRag.Rag.Services;
 using Microsoft.OpenApi.Models;
+using System.Text.Json;
 
 DotnetRagEnvironmentBootstrap.LoadSharedLocalEnvironment();
 
@@ -57,15 +57,15 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo
     {
-        Title = "APIs for NVIDIA RAG Server (v1)",
+        Title = "APIs for RAG Server (v1)",
         Version = "1.0.0",
-        Description = "This API schema describes all the retriever endpoints exposed for NVIDIA RAG server Blueprint."
+        Description = "This API schema describes all the retriever endpoints exposed for RAG server Blueprint."
     });
     options.SwaggerDoc("v2", new OpenApiInfo
     {
-        Title = "APIs for NVIDIA RAG Server (v2) - OpenAI Compatible",
+        Title = "APIs for RAG Server (v2) - OpenAI Compatible",
         Version = "2.0.0",
-        Description = "OpenAI-compatible API endpoints for NVIDIA RAG server Blueprint."
+        Description = "OpenAI-compatible API endpoints for RAG server Blueprint."
     });
 });
 
@@ -78,8 +78,8 @@ app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
     options.RoutePrefix = "swagger";
-    options.SwaggerEndpoint("/swagger/v1/swagger.json", "NVIDIA RAG API v1");
-    options.SwaggerEndpoint("/swagger/v2/swagger.json", "NVIDIA RAG API v2");
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "RAG API v1");
+    options.SwaggerEndpoint("/swagger/v2/swagger.json", "RAG API v2");
 });
 
 app.MapGet("/docs", () => Results.Redirect("/swagger"));
@@ -140,4 +140,4 @@ app.MapGet("/v1/summary",
         await service.GetSummaryAsync(request, collection_name, file_name, blocking, timeout))
     .WithTags("Retrieval APIs");
 
-app.Run();
+await app.RunAsync();

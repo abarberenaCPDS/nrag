@@ -1,0 +1,84 @@
+@using System.Collections.Generic
+
+<div class="reasoning-trace" role="region" aria-label="Reasoning steps">
+    @foreach (var (step, i) in Steps.Select((s, i) => (s, i)))
+    {
+        var hasContent = step.Reasoning.Length > 0 || step.Output.Length > 0 || step.Summary is { Length: > 0 };
+        <div class="reasoning-step" @onclick="() => { if (hasContent) Toggle(i); }"
+             style="cursor:@(hasContent ? "pointer" : "default");">
+            <div class="reasoning-step-header">
+                @if (step.Status == "running")
+                {
+                    <svg class="rs-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                        <path d="M12 2a10 10 0 0 1 10 10"/>
+                    </svg>
+                }
+                else if (step.Status == "error")
+                {
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--error)" stroke-width="2" style="flex-shrink:0;" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                }
+                else
+                {
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" style="flex-shrink:0;" aria-hidden="true">
+                        <polyline points="20,6 9,17 4,12"/>
+                    </svg>
+                }
+                <span class="reasoning-step-label">@FormatStage(step.Stage, step.Label)</span>
+                @if (hasContent)
+                {
+                    <svg class="rs-chevron @(_expanded.Contains(i) ? "expanded" : "")"
+                         width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="6,9 12,15 18,9"/>
+                    </svg>
+                }
+            </div>
+            @if (_expanded.Contains(i) && hasContent)
+            {
+                <div class="reasoning-step-content">
+                    @if (step.Reasoning.Length > 0)
+                    {
+                        <div>@step.Reasoning</div>
+                    }
+                    @if (step.Output.Length > 0)
+                    {
+                        <div style="@(step.Reasoning.Length > 0 ? "margin-top:6px;" : "")">@step.Output</div>
+                    }
+                    @if (step.Summary is { Length: > 0 } summary)
+                    {
+                        <div style="font-style:italic;color:var(--text-muted);@(step.Reasoning.Length > 0 || step.Output.Length > 0 ? "margin-top:6px;" : "")">@summary</div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<ReasoningStep> Steps { get; set; } = [];
+
+    private readonly HashSet<int> _expanded = [];
+
+    private void Toggle(int i)
+    {
+        if (!_expanded.Remove(i)) _expanded.Add(i);
+    }
+
+    private static string FormatStage(string stage, string? label)
+    {
+        if (!string.IsNullOrEmpty(label)) return label;
+        return stage switch
+        {
+            "plan"       => "Planning",
+            "execute"    => "Executing",
+            "synthesize" => "Synthesizing",
+            "retrieval"  => "Retrieving context",
+            "rag"        => "Reasoning",
+            "unknown"    => "Processing",
+            ""           => "Processing",
+            _            => char.ToUpper(stage[0]) + stage[1..]
+        };
+    }
+}

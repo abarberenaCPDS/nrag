@@ -1,0 +1,108 @@
+@inject SettingsState S
+@inject IJSRuntime JS
+
+<div class="settings-section">
+    <h2>Other Settings</h2>
+
+    <div class="settings-row">
+        <div>
+            <div class="settings-row-label">Theme</div>
+            <div class="settings-row-desc">Choose between light and dark theme for the application interface.</div>
+        </div>
+        <div class="settings-row-control" style="display:flex;justify-content:flex-end;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                <span style="color:var(--text-muted);">@(S.IsDarkMode ? "Dark Theme" : "Light Theme")</span>
+                <input type="checkbox" checked="@S.IsDarkMode"
+                       @onchange="e => { S.IsDarkMode = (bool)(e.Value ?? false); S.NotifyChange(); }"
+                       style="accent-color:var(--accent);width:16px;height:16px;" aria-label="Theme toggle" />
+            </label>
+        </div>
+    </div>
+
+    <div class="settings-row">
+        <div>
+            <div class="settings-row-label">Use Local Storage</div>
+            <div class="settings-row-desc">Enable to persist settings and data in your browser's local storage. When disabled, all local storage will be cleared.</div>
+        </div>
+        <div class="settings-row-control" style="display:flex;justify-content:flex-end;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                <span style="color:var(--text-muted);">@(S.UseLocalStorage ? "Enabled" : "Disabled")</span>
+                <input type="checkbox" checked="@S.UseLocalStorage"
+                       @onchange="HandleUseLocalStorageChanged"
+                       style="accent-color:var(--accent);width:16px;height:16px;" aria-label="Use Local Storage" />
+            </label>
+        </div>
+    </div>
+
+    <div class="settings-row">
+        <div>
+            <div class="settings-row-label">Stop Tokens</div>
+            <div class="settings-row-desc">Add text tokens that will stop text generation when encountered. Click on a token to remove it.</div>
+        </div>
+        <div class="settings-row-control">
+            <div style="display:flex;flex-direction:column;gap:8px;">
+                @if (S.StopTokenList.Count > 0)
+                {
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                        @foreach (var token in S.StopTokenList.ToList())
+                        {
+                            var t = token;
+                            <span style="display:inline-flex;align-items:center;gap:4px;background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;"
+                                  title="Click to remove"
+                                  @onclick="() => RemoveToken(t)">
+                                @t
+                                <span style="color:var(--text-muted);font-size:11px;" aria-hidden="true">×</span>
+                            </span>
+                        }
+                    </div>
+                }
+                <div style="display:flex;gap:6px;">
+                    <input type="text" @bind="_newToken" @bind:event="oninput"
+                           @onkeydown="HandleKeyDown"
+                           placeholder="Enter stop token"
+                           style="flex:1;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
+                    <button @onclick="AddToken"
+                            style="background:var(--accent);border:none;border-radius:6px;padding:6px 14px;cursor:pointer;color:#000;font-weight:500;font-size:13px;">
+                        Add
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _newToken = "";
+
+    private void AddToken()
+    {
+        var token = _newToken.Trim();
+        if (string.IsNullOrEmpty(token) || S.StopTokenList.Contains(token)) return;
+        S.StopTokenList.Add(token);
+        _newToken = "";
+        S.NotifyChange();
+    }
+
+    private void RemoveToken(string token)
+    {
+        S.StopTokenList.Remove(token);
+        S.NotifyChange();
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") AddToken();
+    }
+
+    private async Task HandleUseLocalStorageChanged(ChangeEventArgs e)
+    {
+        var val = (bool)(e.Value ?? false);
+        S.UseLocalStorage = val;
+        if (!val)
+        {
+            try { await JS.InvokeVoidAsync("ragApp.clearSettings"); }
+            catch { }
+        }
+        S.NotifyChange();
+    }
+}

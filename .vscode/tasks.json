@@ -2,6 +2,29 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "build: solution",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/dotnet_rag/DotnetRag.sln",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile",
+      "runOptions": {
+        "instanceLimit": 1
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
       "label": "run: dotnet all services (shared env)",
       "type": "process",
       "command": "${workspaceFolder}/scripts/dotnet/run-local-all.sh",
@@ -10,22 +33,13 @@
     },
     {
       "label": "build: all dotnet services",
-      "dependsOn": [
-        "build: rag_server",
-        "build: ingestor_server",
-        "build: reranker_service"
-      ],
-      "dependsOrder": "sequence",
+      "dependsOn": ["build: solution"],
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "build: both apis",
-      "dependsOn": [
-        "build: rag_server",
-        "build: ingestor_server"
-      ],
-      "dependsOrder": "sequence",
+      "dependsOn": ["build: solution"],
       "group": "build",
       "problemMatcher": []
     },
@@ -60,6 +74,30 @@
       "args": [
         "build",
         "${workspaceFolder}/src/dotnet_rag/reranker_service/DotnetRag.Reranker_Service.csproj",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build: blazor_frontend",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/dotnet_rag/blazor_frontend/DotnetRag.Blazor.csproj",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build: AppHost",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/dotnet_rag/AppHost/DotnetRag.AppHost.csproj",
         "/property:GenerateFullPaths=true",
         "/consoleloggerparameters:NoSummary"
       ],

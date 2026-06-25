@@ -1,0 +1,242 @@
+@page "/"
+@inject ChatState ChatState
+@inject CollectionsState ColState
+@inject SettingsState Settings
+@inject StreamingService Streaming
+@inject RagApiService RagApi
+@inject NotificationState NotifState
+@implements IDisposable
+
+<div style="display:flex;height:100%;width:100%;overflow:hidden;">
+    <CollectionSidebar />
+
+    <div class="app-main">
+        <div class="chat-messages" @ref="_scrollRef">
+            @if (ChatState.Messages.Count == 0)
+            {
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-muted);margin:auto;">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.35" aria-hidden="true">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <div style="text-align:center;">
+                        <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;">Start a conversation</div>
+                        <div style="font-size:13px;">Select a collection and ask a question.</div>
+                    </div>
+                </div>
+            }
+            @foreach (var msg in ChatState.Messages)
+            {
+                <MessageBubble Message="msg" OnCitationsClick="ShowCitations" />
+            }
+        </div>
+
+        <MessageInput Disabled="ChatState.IsStreaming" OnSubmit="HandleSubmit" OnStop="StopGeneration" />
+    </div>
+
+    @if (_citationsOpen && _activeCitations.Count > 0)
+    {
+        <CitationsPanel Citations="_activeCitations" OnClose="CloseCitations" />
+    }
+</div>
+
+@code {
+    private ElementReference _scrollRef;
+    private bool _citationsOpen;
+    private List<Citation> _activeCitations = [];
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ChatState.OnChange += OnChatStateChange;
+        ColState.OnChange += OnColStateChange;
+
+        var health = await RagApi.GetHealthAsync();
+        if (health is not null) NotifState.SetHealth(health);
+
+        var config = await RagApi.GetConfigurationAsync();
+        if (config is not null) Settings.ApplyServerDefaults(config);
+    }
+
+    private async void OnChatStateChange() => await InvokeAsync(async () =>
+    {
+        StateHasChanged();
+        await ScrollToBottom();
+    });
+
+    private async void OnColStateChange() => await InvokeAsync(StateHasChanged);
+
+    private async Task HandleSubmit((string Text, List<AttachedImage> Images) args)
+    {
+        _cts = new CancellationTokenSource();
+
+        var (text, images) = args;
+        ChatState.AddUserMessage(text, images);
+        var assistantMsg = ChatState.AddAssistantMessage();
+
+        var request = BuildRequest(text, images);
+
+        try
+        {
+            await foreach (var chunk in Streaming.StreamGenerateAsync(request, _cts.Token))
+            {
+                if (chunk.EventType == "__error__")
+                {
+                    ChatState.SetError(assistantMsg.Id, chunk.Choices?[0]?.Delta?.Content ?? "Unknown error");
+                    break;
+                }
+
+                var delta = chunk.Choices?[0]?.Delta;
+
+                // Resolve event_type from delta first (PR #512), fall back to top-level chunk
+                var evtType = delta?.EventType ?? chunk.EventType;
+                var stage   = delta?.Stage   ?? chunk.Stage;
+
+                // Route by event type — mirrors useChatStream.ts logic
+                if (evtType == "stage_start")
+                {
+                    ChatState.StartReasoningStage(assistantMsg.Id, stage ?? "unknown", delta?.ReasoningContent);
+                }
+                else if (evtType == "stage_end")
+                {
+                    ChatState.EndReasoningStage(assistantMsg.Id, delta?.ReasoningContent);
+                }
+                else if (evtType is "intermediate_reasoning" or "final_reasoning")
+                {
+                    if (delta?.ReasoningContent is { Length: > 0 } rc)
+                        ChatState.AddReasoningContent(assistantMsg.Id, stage, rc, isOutput: false);
+                }
+                else if (evtType == "intermediate_output")
+                {
+                    if (delta?.ReasoningContent is { Length: > 0 } rc)
+                        ChatState.AddReasoningContent(assistantMsg.Id, stage, rc, isOutput: true);
+                }
+                else if (evtType == "final_answer")
+                {
+                    // content goes to main message below
+                }
+                else if (evtType == "error")
+                {
+                    ChatState.CloseAllReasoningSteps(assistantMsg.Id, isError: true);
+                }
+                else if (evtType is not null and not "__error__")
+                {
+                    // agent_event or future unknown type — capture any reasoning content
+                    if (delta?.ReasoningContent is { Length: > 0 } rc)
+                        ChatState.AddReasoningContent(assistantMsg.Id, stage, rc, isOutput: false);
+                }
+                else if (evtType is null)
+                {
+                    // Standard (non-agentic): optional reasoning_content → "rag" step
+                    if (delta?.ReasoningContent is { Length: > 0 } rc)
+                        ChatState.AddReasoningContent(assistantMsg.Id, "rag", rc, isOutput: false);
+                }
+
+                // Main answer token: final_answer chunks and standard chunks both carry content
+                if (evtType is null or "final_answer")
+                {
+                    if (delta?.Content is { Length: > 0 } token)
+                        ChatState.AppendToken(assistantMsg.Id, token);
+                }
+
+                if (chunk.Citations is { } cites && cites.Results.Count > 0)
+                    ChatState.SetCitations(assistantMsg.Id, cites);
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            ChatState.FinalizeMessage(assistantMsg.Id);
+        }
+    }
+
+    private GenerateRequest BuildRequest(string text, List<AttachedImage> images)
+    {
+        object content;
+        if (images.Count > 0)
+        {
+            var parts = new List<object> { (object)new { type = "text", text } };
+            parts.AddRange(images.Select(img =>
+                (object)new { type = "image_url", image_url = new { url = img.DataUri } }));
+            content = parts;
+        }
+        else
+        {
+            content = text;
+        }
+
+        // SkipLast(1) omits the current user message (just added by AddUserMessage) so we
+        // can re-add it below with the correct multimodal content object instead of the
+        // plain string stored in ChatState.
+        var history = ChatState.Messages
+            .Where(m => !m.IsError && !m.IsStreaming)
+            .SkipLast(1)
+            .TakeLast(10)
+            .Select(m => new MessagePayload { Role = m.Role, Content = m.Content })
+            .ToList();
+
+        history.Add(new MessagePayload { Role = "user", Content = content });
+
+        var filterExpr = ColState.SelectedCollectionNames.Count == 1
+            ? ColState.BuildFilterExpression()
+            : null;
+
+        return new GenerateRequest
+        {
+            Messages = history,
+            CollectionNames = ColState.SelectedCollectionNames.Count > 0
+                ? ColState.SelectedCollectionNames.ToList()
+                : null,
+            FilterExpr = string.IsNullOrEmpty(filterExpr) ? null : filterExpr,
+            Temperature = Settings.Temperature,
+            TopP = Settings.TopP,
+            MaxTokens = Settings.MaxTokens,
+            VdbTopK = Settings.VdbTopK,
+            RerankerTopK = Settings.RerankerTopK,
+            EnableReranker = Settings.EnableReranker,
+            EnableCitations = Settings.EnableCitations,
+            EnableQueryRewriting = Settings.EnableQueryRewriting,
+            EnableGuardrails = Settings.EnableGuardrails,
+            EnableVlmInference = images.Count > 0 && Settings.EnableVlmInference,
+            EnableFilterGenerator = Settings.EnableFilterGenerator && ColState.SelectedCollectionNames.Count == 1,
+            Agentic = Settings.AgenticMode,
+            ConfidenceThreshold = Settings.ConfidenceThreshold,
+            EnableStreaming = true,
+            VdbEndpoint = string.IsNullOrEmpty(Settings.VdbEndpoint) ? null : Settings.VdbEndpoint
+        };
+    }
+
+    private void StopGeneration()
+    {
+        _cts?.Cancel();
+    }
+
+    private void ShowCitations(List<Citation> citations)
+    {
+        _activeCitations = citations;
+        _citationsOpen = true;
+    }
+
+    private void CloseCitations() => _citationsOpen = false;
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval",
+                "document.querySelector('.chat-messages')?.scrollTo({top:9999999,behavior:'smooth'})");
+        }
+        catch { /* JS not ready */ }
+    }
+
+    public void Dispose()
+    {
+        ChatState.OnChange -= OnChatStateChange;
+        ColState.OnChange -= OnColStateChange;
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+
+    [Inject] private IJSRuntime JS { get; set; } = null!;
+}

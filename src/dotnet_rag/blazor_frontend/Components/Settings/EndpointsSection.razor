@@ -1,0 +1,11 @@
+@inject SettingsState S
+
+<div class="settings-section">
+    <h2>Endpoint Configuration</h2>
+
+    <SettingsText Label="LLM Endpoint" Description="Base URL of the LLM inference server." Placeholder="Leave empty for default" @bind-Value="S.LlmServerUrl" />
+    <SettingsText Label="Embedding Endpoint" Description="Base URL of the embedding inference server." Placeholder="Leave empty for default" @bind-Value="S.EmbeddingServerUrl" />
+    <SettingsText Label="Reranker Endpoint" Description="Base URL of the reranker inference server." Placeholder="Leave empty for default" @bind-Value="S.RankingServerUrl" />
+    <SettingsText Label="VLM Endpoint" Description="Base URL of the vision language model server." Placeholder="Leave empty for default" @bind-Value="S.VlmServerUrl" />
+    <SettingsText Label="Vector Database Endpoint" Description="Base URL of the vector database server." Placeholder="Leave empty for default" @bind-Value="S.VdbEndpoint" />
+</div>

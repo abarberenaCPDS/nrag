@@ -1,0 +1,25 @@
+<div class="settings-row">
+    <div>
+        <div class="settings-row-label">@Label</div>
+        @if (!string.IsNullOrEmpty(Description))
+        {
+            <div class="settings-row-desc">@Description</div>
+        }
+    </div>
+    <div class="settings-row-control">
+        <input type="number" min="@Min" max="@Max"
+               value="@Value"
+               @oninput="e => ValueChanged.InvokeAsync(int.TryParse(e.Value?.ToString(), out var v) ? v : Value)"
+               style="background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:100%;outline:none;"
+               aria-label="@Label" />
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Description { get; set; } = "";
+    [Parameter] public int Value { get; set; }
+    [Parameter] public EventCallback<int> ValueChanged { get; set; }
+    [Parameter] public int Min { get; set; }
+    [Parameter] public int Max { get; set; } = int.MaxValue;
+}

@@ -1,0 +1,150 @@
+@inject NotificationState NotifState
+@inject IngestorApiService IngestorApi
+@implements IDisposable
+
+<div style="position:relative;z-index:1002;">
+    <button class="nav-icon-btn" title="Notifications" aria-label="Notifications"
+            style="position:relative;" @onclick="TogglePanel">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        @if (NotifState.UnreadTaskCount > 0)
+        {
+            <span class="ntf-badge">@NotifState.UnreadTaskCount</span>
+        }
+    </button>
+</div>
+
+@if (_open)
+{
+    <div style="position:fixed;inset:0;z-index:1000;" @onclick="Close"></div>
+    <div class="ntf-panel" @onclick:stopPropagation="true">
+        <div class="ntf-header">
+            <span style="font-size:18px;font-weight:600;">Notifications</span>
+            <button class="ntf-clear-btn" @onclick="ClearAll" title="Clear All">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14H6L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4h6v2"/>
+                </svg>
+                Clear All
+            </button>
+        </div>
+        <hr class="ntf-divider" />
+
+        @{
+            var visible = NotifState.Tasks.Where(t => !t.Dismissed).OrderByDescending(t => t.CompletedAt ?? DateTime.MinValue).ToList();
+        }
+
+        @if (visible.Count == 0)
+        {
+            <p style="color:var(--text-muted);font-size:13px;text-align:center;padding:24px 0;">No notifications</p>
+        }
+        else
+        {
+            <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.05em;">
+                Ingestion Tasks (@visible.Count)
+            </div>
+            @foreach (var task in visible)
+            {
+                var progress = task.TotalDocuments > 0 ? (double)task.DocumentsCompleted / task.TotalDocuments * 100 : 0;
+                var borderColor = task.State == "FINISHED" ? "#76B900" : task.State == "FAILED" ? "var(--error)" : "var(--border)";
+                var statusText = task.State == "FINISHED" ? "Completed" : task.State == "FAILED" ? "Failed" : "Processing";
+                var barColor = task.State == "FINISHED" ? "#76B900" : task.State == "FAILED" ? "var(--error)" : "var(--border)";
+
+                <div class="ntf-task-card" style="border-color:@borderColor;">
+                    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;">
+                        @if (task.State == "FINISHED")
+                        {
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#76B900" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;" aria-hidden="true">
+                                <polyline points="20,6 9,17 4,12"/>
+                            </svg>
+                        }
+                        else if (task.State == "FAILED")
+                        {
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--error)" stroke-width="2" style="flex-shrink:0;margin-top:2px;" aria-hidden="true">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        }
+                        else
+                        {
+                            <svg class="ntf-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:2px;" aria-hidden="true">
+                                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                                <path d="M12 2a10 10 0 0 1 10 10"/>
+                            </svg>
+                        }
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@task.CollectionName</div>
+                            <div style="font-size:12px;color:var(--text-muted);margin-top:1px;">@statusText</div>
+                        </div>
+                        <button class="ntf-dismiss-btn" @onclick="() => NotifState.DismissTask(task.TaskId)" aria-label="Dismiss">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Uploaded: @task.DocumentsCompleted / @task.TotalDocuments</div>
+                    @if (task.CompletedAt is { } completedAt)
+                    {
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">@completedAt.ToString("M/d/yyyy, h:mm:ss tt")</div>
+                    }
+                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                        <div style="height:100%;width:@(progress.ToString("F0", System.Globalization.CultureInfo.InvariantCulture))%;background:@barColor;border-radius:3px;transition:width 0.3s ease;"></div>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+}
+
+@code {
+    private bool _open;
+    private System.Threading.Timer? _pollTimer;
+
+    protected override void OnInitialized()
+    {
+        NotifState.OnChange += OnStateChanged;
+        _pollTimer = new System.Threading.Timer(PollPendingTasks, null, 5000, 5000);
+    }
+
+    private void TogglePanel() => _open = !_open;
+
+    private void Close() => _open = false;
+
+    private void ClearAll()
+    {
+        NotifState.ClearAllTasks();
+        _open = false;
+    }
+
+    private async void PollPendingTasks(object? _)
+    {
+        var pending = NotifState.Tasks.Where(t => !t.Dismissed && !t.IsTerminal).ToList();
+        if (pending.Count == 0) return;
+
+        foreach (var task in pending)
+        {
+            try
+            {
+                var status = await IngestorApi.GetTaskStatusAsync(task.TaskId);
+                if (status?.State is null) continue;
+                NotifState.UpdateTask(
+                    task.TaskId,
+                    status.State,
+                    status.Result?.DocumentsCompleted ?? 0,
+                    status.Result?.TotalDocuments ?? 0);
+            }
+            catch { }
+        }
+    }
+
+    private async void OnStateChanged() => await InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        NotifState.OnChange -= OnStateChanged;
+        _pollTimer?.Dispose();
+    }
+}

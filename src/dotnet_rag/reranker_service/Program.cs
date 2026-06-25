@@ -48,7 +48,7 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo
     {
-        Title = "APIs for NVIDIA RAG Reranker Service (v1)",
+        Title = "APIs for The RAG Reranker Service (v1)",
         Version = "1.0.0",
         Description = "Internal reranking API used by dotnet-rag-server."
     });
@@ -60,7 +60,7 @@ app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
     options.RoutePrefix = "swagger";
-    options.SwaggerEndpoint("/swagger/v1/swagger.json", "NVIDIA Reranker API v1");
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "RAG Reranker API v1");
 });
 
 app.MapGet("/health", () => Results.Ok(new { message = "Service is up." }))

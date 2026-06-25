@@ -1,0 +1,24 @@
+@keyframes rs-spin {
+    to { transform: rotate(360deg); }
+}
+
+.rs-spin {
+    animation: rs-spin 0.9s linear infinite;
+}
+
+.rs-chevron {
+    margin-left: auto;
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+    color: var(--text-muted);
+}
+
+.rs-chevron.expanded {
+    transform: rotate(180deg);
+}
+
+.reasoning-step-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}

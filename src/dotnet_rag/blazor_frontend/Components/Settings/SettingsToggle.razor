@@ -1,0 +1,22 @@
+<div class="settings-row">
+    <div>
+        <div class="settings-row-label">@Label</div>
+        @if (!string.IsNullOrEmpty(Description))
+        {
+            <div class="settings-row-desc">@Description</div>
+        }
+    </div>
+    <div class="settings-row-control" style="display:flex;justify-content:flex-end;">
+        <label style="display:flex;align-items:center;cursor:pointer;">
+            <input type="checkbox" @bind="Value" @bind:after="() => ValueChanged.InvokeAsync(Value)"
+                   style="accent-color:var(--accent);width:16px;height:16px;" aria-label="@Label" />
+        </label>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Description { get; set; } = "";
+    [Parameter] public bool Value { get; set; }
+    [Parameter] public EventCallback<bool> ValueChanged { get; set; }
+}

@@ -1,0 +1,15 @@
+<div>
+    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">@Label</label>
+    <input type="text" value="@Value"
+           @oninput="OnInput"
+           style="width:100%;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;transition:border-color 0.15s;"
+           aria-label="@Label" />
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+
+    private Task OnInput(ChangeEventArgs e) => ValueChanged.InvokeAsync(e.Value?.ToString() ?? "");
+}

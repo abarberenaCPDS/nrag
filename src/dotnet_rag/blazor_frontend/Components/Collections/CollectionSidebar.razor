@@ -1,0 +1,118 @@
+@inject CollectionsState ColState
+@inject IngestorApiService IngestorApi
+@inject NotificationState NotifState
+@implements IDisposable
+
+<div class="app-sidebar">
+    <!-- Search input -->
+    <div style="padding:12px;border-bottom:1px solid var(--border);flex-shrink:0;">
+        <div style="display:flex;align-items:center;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:0 10px;gap:6px;transition:border-color 0.15s;"
+             onfocusin="this.style.borderColor='var(--accent)'" onfocusout="this.style.borderColor='var(--border)'">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-muted);flex-shrink:0;" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="search" placeholder="Search collections…"
+                   style="width:100%;background:transparent;border:none;padding:6px 0;color:var(--text);font-size:13px;outline:none;font-family:var(--font-ui);"
+                   @bind="ColState.SearchQuery" @bind:event="oninput" aria-label="Search collections" />
+        </div>
+    </div>
+
+    @if (ColState.SelectedCollectionNames.Count > 1)
+    {
+        <div style="margin:8px 12px;padding:8px 10px;background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid var(--warning);border-radius:6px;font-size:12px;color:var(--warning);flex-shrink:0;">
+            Filters are disabled when multiple collections are selected.
+        </div>
+    }
+
+    <!-- Collection grid (scrollable) -->
+    <div style="flex:1;overflow-y:auto;min-height:0;">
+        @if (ColState.AllCollections.Count == 0)
+        {
+            <div class="sidebar-empty-state">
+                <svg class="empty-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+                <div class="empty-title">No collections</div>
+                <div class="empty-sub">Create your first collection and add files to customize your model's response.</div>
+            </div>
+        }
+        else if (!ColState.Filtered.Any())
+        {
+            <div class="sidebar-empty-state">
+                <svg class="empty-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <div class="empty-title">No results</div>
+                <div class="empty-sub">No collections match "@ColState.SearchQuery"</div>
+            </div>
+        }
+        else
+        {
+            <div class="collection-grid" role="list">
+                @foreach (var col in ColState.Filtered)
+                {
+                    var isSelected = ColState.SelectedCollectionNames.Contains(col.CollectionName);
+                    var colName = col.CollectionName;
+                    <div class="collection-item @(isSelected ? "selected" : "")"
+                         role="listitem"
+                         @onclick="() => ColState.ToggleSelection(colName)"
+                         @ondblclick="() => ColState.OpenDrawer(col)"
+                         title="@col.CollectionName (double-click for details)">
+                        <input type="checkbox" class="collection-checkbox" checked="@isSelected"
+                               @onclick:stopPropagation="true"
+                               @onchange="() => ColState.ToggleSelection(colName)"
+                               aria-label="Select @col.CollectionName" />
+                        <div class="name">@col.CollectionName</div>
+                        <div class="count">@col.NumEntities entities</div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (ColState.SelectedCollectionNames.Count == 1)
+    {
+        <FilterBar />
+    }
+
+    <!-- New Collection button pinned to bottom (mirrors React sidebar) -->
+    <div class="sidebar-footer">
+        <a href="/collections/new" class="new-collection-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Collection
+        </a>
+    </div>
+</div>
+
+@if (ColState.IsDrawerOpen && ColState.DrawerCollection is not null)
+{
+    <CollectionDrawer Collection="ColState.DrawerCollection" />
+}
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        ColState.OnChange += HandleChange;
+        await LoadCollections();
+    }
+
+    private async Task LoadCollections()
+    {
+        var result = await IngestorApi.GetCollectionsAsync();
+        if (result is null)
+        {
+            NotifState.AddToast("Could not load collections. Is the ingestor server running?", ToastSeverity.Error);
+        }
+        else
+        {
+            ColState.SetCollections(result.Collections);
+        }
+        StateHasChanged();
+    }
+
+    private async void HandleChange() => await InvokeAsync(StateHasChanged);
+
+    public void Dispose() => ColState.OnChange -= HandleChange;
+}

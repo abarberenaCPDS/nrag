@@ -1,0 +1,80 @@
+@using System.Collections.Generic
+
+<div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-weight:500;font-size:13px;">Metadata Schema</span>
+        <button style="background:none;border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:12px;color:var(--text-muted);cursor:pointer;"
+                @onclick="() => _adding = !_adding">+ Add field</button>
+    </div>
+
+    @foreach (var (field, i) in Schema.Select((f, i) => (f, i)))
+    {
+        <div class="file-item" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
+            <div>
+                <span style="font-weight:500;font-size:12px;">@field.Name</span>
+                <span class="badge" style="margin-left:6px;">@field.Type</span>
+                @if (field.Required) { <span class="badge accent" style="margin-left:4px;">required</span> }
+            </div>
+            <button class="file-remove" @onclick="() => RemoveField(i)" aria-label="Remove @field.Name">✕</button>
+        </div>
+    }
+
+    @if (Schema.Count == 0 && !_adding)
+    {
+        <p class="text-muted" style="font-size:13px;">No metadata schema defined. Fields are optional.</p>
+    }
+
+    @if (_adding)
+    {
+        <div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-top:8px;display:flex;flex-direction:column;gap:8px;">
+            <input placeholder="Field name" @bind="_name"
+                   style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
+            <select @bind="_type"
+                    style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;">
+                <option value="string">string</option>
+                <option value="integer">integer</option>
+                <option value="float">float</option>
+                <option value="number">number</option>
+                <option value="boolean">boolean</option>
+                <option value="datetime">datetime</option>
+                <option value="array">array</option>
+            </select>
+            <input placeholder="Description (optional)" @bind="_description"
+                   style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" @bind="_required" style="accent-color:var(--accent);" /> Required
+            </label>
+            <div style="display:flex;gap:8px;">
+                <button style="flex:1;background:var(--accent);border:none;border-radius:4px;padding:7px;cursor:pointer;color:#000;font-weight:500;font-size:13px;"
+                        @onclick="AddField">Add</button>
+                <button style="flex:1;background:transparent;border:1px solid var(--border);border-radius:4px;padding:7px;cursor:pointer;color:var(--text-muted);font-size:13px;"
+                        @onclick="() => _adding = false">Cancel</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<MetadataFieldDef> Schema { get; set; } = [];
+    [Parameter] public EventCallback<List<MetadataFieldDef>> SchemaChanged { get; set; }
+
+    private bool _adding;
+    private string _name = "";
+    private string _type = "string";
+    private string _description = "";
+    private bool _required;
+
+    private async Task AddField()
+    {
+        if (string.IsNullOrWhiteSpace(_name)) return;
+        Schema.Add(new MetadataFieldDef { Name = _name, Type = _type, Description = _description, Required = _required });
+        await SchemaChanged.InvokeAsync(Schema);
+        _name = ""; _type = "string"; _description = ""; _required = false; _adding = false;
+    }
+
+    private async Task RemoveField(int i)
+    {
+        Schema.RemoveAt(i);
+        await SchemaChanged.InvokeAsync(Schema);
+    }
+}
