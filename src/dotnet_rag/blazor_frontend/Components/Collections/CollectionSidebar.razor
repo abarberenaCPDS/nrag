@@ -56,14 +56,24 @@
                     <div class="collection-item @(isSelected ? "selected" : "")"
                          role="listitem"
                          @onclick="() => ColState.ToggleSelection(colName)"
-                         @ondblclick="() => ColState.OpenDrawer(col)"
-                         title="@col.CollectionName (double-click for details)">
+                         title="@col.CollectionName">
                         <input type="checkbox" class="collection-checkbox" checked="@isSelected"
                                @onclick:stopPropagation="true"
                                @onchange="() => ColState.ToggleSelection(colName)"
                                aria-label="Select @col.CollectionName" />
                         <div class="name">@col.CollectionName</div>
                         <div class="count">@col.NumEntities entities</div>
+                        <button class="collection-more-btn"
+                                title="Details"
+                                @onclick:stopPropagation="true"
+                                @onclick="() => ColState.OpenDrawer(col)"
+                                aria-label="Open @col.CollectionName details">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+                                <circle cx="12" cy="5" r="2"/>
+                                <circle cx="12" cy="12" r="2"/>
+                                <circle cx="12" cy="19" r="2"/>
+                            </svg>
+                        </button>
                     </div>
                 }
             </div>

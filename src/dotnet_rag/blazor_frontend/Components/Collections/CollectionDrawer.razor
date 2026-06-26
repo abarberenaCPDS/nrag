@@ -193,50 +193,67 @@
                 @if (_documents.Count == 0)
                 {
                     <div style="text-align:center;padding:16px 0;color:var(--text-muted);font-size:13px;">
-                        No documents yet. Use "Add Source" below to upload files.
+                        No documents yet. Use the "Add Source to Collection" button below to upload files.
                     </div>
                 }
             }
 
-            <!-- Add New Documents -->
-            <div class="divider"></div>
-            <span style="font-weight:500;font-size:13px;">Add New Documents</span>
-
-            <label style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--ground);border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:13px;color:var(--text-muted);">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>
-                Add files…
-                <InputFile OnChange="HandleFilesSelected" multiple
-                           accept=".pdf,.txt,.md,.docx,.csv,.json,.html,.htm"
-                           style="display:none;" />
-            </label>
-
-            @if (_addFiles.Count > 0)
+            <!-- Add Source (toggleable, hidden by default) -->
+            @if (_showUploader)
             {
-                <div style="display:flex;flex-direction:column;gap:4px;">
-                    @foreach (var (f, i) in _addFiles.Select((f, i) => (f, i)))
-                    {
-                        var idx = i;
-                        <div class="file-item">
-                            <span class="file-name">@f.Name</span>
-                            <button class="file-remove" @onclick="() => _addFiles.RemoveAt(idx)" aria-label="Remove @f.Name">✕</button>
-                        </div>
-                    }
-                </div>
-                <button style="width:100%;background:var(--accent);border:none;border-radius:6px;padding:8px;cursor:pointer;color:#000;font-weight:500;font-size:13px;"
-                        disabled="@_uploading"
-                        @onclick="UploadNewFiles">
-                    @if (_uploading) { <span>Uploading…</span> }
-                    else { <span>Upload @_addFiles.Count File@(_addFiles.Count == 1 ? "" : "s")</span> }
-                </button>
+                <div class="divider"></div>
+                <span style="font-weight:500;font-size:13px;">Add New Documents</span>
+
+                <label style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--ground);border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:13px;color:var(--text-muted);">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Add files…
+                    <InputFile OnChange="HandleFilesSelected" multiple
+                               accept=".pdf,.txt,.md,.docx,.csv,.json,.html,.htm"
+                               style="display:none;" />
+                </label>
+
+                @if (_addFiles.Count > 0)
+                {
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                        @foreach (var (f, i) in _addFiles.Select((f, i) => (f, i)))
+                        {
+                            var idx = i;
+                            <div class="file-item">
+                                <span class="file-name">@f.Name</span>
+                                <button class="file-remove" @onclick="() => _addFiles.RemoveAt(idx)" aria-label="Remove @f.Name">✕</button>
+                            </div>
+                        }
+                    </div>
+                    <button style="width:100%;background:var(--accent);border:none;border-radius:6px;padding:8px;cursor:pointer;color:#000;font-weight:500;font-size:13px;"
+                            disabled="@_uploading"
+                            @onclick="UploadNewFiles">
+                        @if (_uploading) { <span>Uploading…</span> }
+                        else { <span>Upload @_addFiles.Count File@(_addFiles.Count == 1 ? "" : "s")</span> }
+                    </button>
+                }
             }
         </div>
 
-        <!-- Footer -->
-        <div style="padding:16px;border-top:1px solid var(--border);">
-            <button style="width:100%;background:transparent;border:1px solid var(--error);color:var(--error);border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:500;"
-                    @onclick="DeleteCollection">Delete collection</button>
+        <!-- Footer: Delete + Add Source (mirrors React drawer footer) -->
+        <div style="padding:16px;border-top:1px solid var(--border);display:flex;gap:8px;">
+            <button style="flex:1;background:transparent;border:1px solid var(--error);color:var(--error);border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:500;"
+                    @onclick="DeleteCollection">Delete Collection</button>
+            @if (!_showUploader)
+            {
+                <button style="flex:1;background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:500;"
+                        @onclick="() => _showUploader = true">
+                    + Add Source to Collection
+                </button>
+            }
+            else
+            {
+                <button style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:500;"
+                        @onclick="() => { _showUploader = false; _addFiles.Clear(); }">
+                    × Close Uploader
+                </button>
+            }
         </div>
     </div>
 </div>
@@ -247,6 +264,7 @@
     private List<DocumentInfo>? _documents;
     private readonly List<IBrowserFile> _addFiles = [];
     private bool _uploading;
+    private bool _showUploader;
 
     private readonly Dictionary<string, SummaryResponse?> _summaries = new();
     private readonly Dictionary<string, Timer?> _summaryTimers = new();
@@ -411,6 +429,8 @@
         {
             var count = uploadFiles.Count;
             _addFiles.Clear();
+            _showUploader = false;
+            NotifState.AddTask(result.TaskId, Collection.CollectionName);
             NotifState.AddToast($"Upload started for {count} file{(count == 1 ? "" : "s")}.", ToastSeverity.Success);
             var docs = await IngestorApi.GetDocumentsAsync(Collection.CollectionName, forceGetMetadata: true);
             _documents = docs.Documents;

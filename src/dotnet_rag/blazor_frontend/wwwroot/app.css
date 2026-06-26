@@ -132,6 +132,24 @@ html, body {
     height: 14px;
     accent-color: var(--accent);
 }
+.collection-item .collection-more-btn {
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 3px 5px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.1s, background 0.1s;
+}
+.collection-item:hover .collection-more-btn { opacity: 1; }
+.collection-item.selected .collection-more-btn { opacity: 1; }
+.collection-item .collection-more-btn:hover { background: var(--border); color: var(--text); }
 
 /* ── Chat area ─────────────────────────────────────────────────────────────── */
 .chat-messages {
