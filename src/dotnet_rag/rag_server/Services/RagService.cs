@@ -16,6 +16,7 @@ public sealed class RagService(
     ILogger<RagService> logger,
     IChatCompletionService chatService,
     IVectorStore vectorStore,
+    IVectorStoreManagement vectorStoreManagement,
     IRerankerClient rerankerClient,
     ISummarizationService summarizationService,
     QueryRewritingService queryRewritingService,
@@ -43,9 +44,11 @@ public sealed class RagService(
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
 
             // Vector store liveness check
-            var vdbStatus = await PingAsync(http, GetVectorStoreHealthUrl());
+            var vdbSw = Stopwatch.StartNew();
+            var vdbStatus = await CheckVectorStoreHealthAsync(requestCancellationToken: default);
+            vdbSw.Stop();
             databases.Add(new DatabaseHealthInfo(
-                "vector_store", config.VectorStoreUrl, vdbStatus));
+                "vector_store", config.VectorStoreUrl, vdbStatus, vdbSw.Elapsed.TotalMilliseconds));
 
             // LLM endpoint liveness check
             var llmStatus = await PingAsync(http, GetLlmHealthUrl());
@@ -83,29 +86,36 @@ public sealed class RagService(
         }
     }
 
-    // Ollama: GET /api/health  — OpenAI-compatible NIM: GET /v1/models
+    // Ollama: GET /api/tags  — OpenAI-compatible NIM: GET /v1/models
     private string GetLlmHealthUrl()
     {
         var base_ = config.LlmEndpoint.TrimEnd('/');
         return config.LlmProvider.Equals("ollama", StringComparison.OrdinalIgnoreCase)
-            ? $"{base_}/api/health"
+            ? $"{base_}/api/tags"
             : $"{base_}/v1/models";
     }
 
     private string GetEmbeddingHealthUrl()
     {
         var base_ = config.EmbeddingEndpoint.TrimEnd('/');
-        return config.LlmProvider.Equals("ollama", StringComparison.OrdinalIgnoreCase)
-            ? $"{base_}/api/health"
+        return config.EmbeddingProvider.Equals("ollama", StringComparison.OrdinalIgnoreCase)
+            ? $"{base_}/api/tags"
             : $"{base_}/v1/models";
     }
 
-    private string GetVectorStoreHealthUrl()
+    private async Task<ServiceStatus> CheckVectorStoreHealthAsync(
+        CancellationToken requestCancellationToken)
     {
-        var base_ = config.VectorStoreUrl.TrimEnd('/');
-        return config.VectorStoreName.Equals("milvus", StringComparison.OrdinalIgnoreCase)
-            ? $"{base_}/healthz"
-            : $"{base_}/api/v1/heartbeat";
+        try
+        {
+            return await vectorStoreManagement.CheckHealthAsync(requestCancellationToken)
+                ? ServiceStatus.Healthy
+                : ServiceStatus.Unhealthy;
+        }
+        catch
+        {
+            return ServiceStatus.Unhealthy;
+        }
     }
 
     public ConfigurationResponse GetConfiguration()
@@ -135,7 +145,11 @@ public sealed class RagService(
                 EmbeddingEndpoint: config.EmbeddingEndpoint,
                 RerankerEndpoint: config.RerankerServiceUrl,
                 VlmEndpoint: config.VlmEndpoint,
-                VdbEndpoint: config.VectorStoreUrl));
+                VdbEndpoint: config.VectorStoreUrl),
+            Providers: new ProvidersDefaults(
+                LlmProvider: config.LlmProvider,
+                EmbeddingProvider: config.EmbeddingProvider,
+                VlmProvider: config.VlmProvider));
     }
 
     public async Task<IResult> GenerateAsync(HttpRequest request, Prompt prompt)
@@ -608,7 +622,7 @@ public sealed class RagService(
     }
 
     // ORIG: nvidia_rag/rag_server/main.py::get_summary
-    // Reads from ChromaDB "summary_{collectionName}" instead of the object store.
+    // Reads from provider-selected vector summary collection "summary_{collectionName}".
     // When blocking=true, polls until the summary is ready or the timeout elapses.
     public async Task<IResult> GetSummaryAsync(
         HttpRequest request,

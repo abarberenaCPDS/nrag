@@ -13,6 +13,14 @@
             <div>
                 <span style="font-weight:500;font-size:12px;">@field.Name</span>
                 <span class="badge" style="margin-left:6px;">@field.Type</span>
+                @if (field.Type == "array" && !string.IsNullOrWhiteSpace(field.ArrayType))
+                {
+                    <span class="badge" style="margin-left:4px;">@(field.ArrayType + "[]")</span>
+                }
+                @if (field.MaxLength is not null)
+                {
+                    <span class="badge" style="margin-left:4px;">max @field.MaxLength</span>
+                }
                 @if (field.Required) { <span class="badge accent" style="margin-left:4px;">required</span> }
             </div>
             <button class="file-remove" @onclick="() => RemoveField(i)" aria-label="Remove @field.Name">✕</button>
@@ -29,6 +37,10 @@
         <div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-top:8px;display:flex;flex-direction:column;gap:8px;">
             <input placeholder="Field name" @bind="_name"
                    style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div style="color:var(--error);font-size:12px;">@_error</div>
+            }
             <select @bind="_type"
                     style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;">
                 <option value="string">string</option>
@@ -39,6 +51,22 @@
                 <option value="datetime">datetime</option>
                 <option value="array">array</option>
             </select>
+            @if (_type == "array")
+            {
+                <select @bind="_arrayType"
+                        style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;">
+                    <option value="string">array of string</option>
+                    <option value="integer">array of integer</option>
+                    <option value="float">array of float</option>
+                    <option value="number">array of number</option>
+                    <option value="boolean">array of boolean</option>
+                </select>
+            }
+            @if (_type is "string" or "array")
+            {
+                <input type="number" min="1" placeholder="Max length (optional)" @bind="_maxLength"
+                       style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
+            }
             <input placeholder="Description (optional)" @bind="_description"
                    style="background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
@@ -61,15 +89,46 @@
     private bool _adding;
     private string _name = "";
     private string _type = "string";
+    private string _arrayType = "string";
     private string _description = "";
     private bool _required;
+    private int? _maxLength;
+    private string _error = "";
+    private static readonly HashSet<string> ReservedNames = ["type", "subtype", "location"];
 
     private async Task AddField()
     {
-        if (string.IsNullOrWhiteSpace(_name)) return;
-        Schema.Add(new MetadataFieldDef { Name = _name, Type = _type, Description = _description, Required = _required });
+        var name = _name.Trim();
+        _error = "";
+        if (string.IsNullOrWhiteSpace(name)) return;
+        if (ReservedNames.Contains(name))
+        {
+            _error = $"'{name}' is reserved.";
+            return;
+        }
+        if (Schema.Any(field => string.Equals(field.Name, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            _error = $"'{name}' already exists.";
+            return;
+        }
+
+        Schema.Add(new MetadataFieldDef
+        {
+            Name = name,
+            Type = _type,
+            ArrayType = _type == "array" ? _arrayType : null,
+            MaxLength = _type is "string" or "array" && _maxLength is > 0 ? _maxLength : null,
+            Description = _description,
+            Required = _required
+        });
         await SchemaChanged.InvokeAsync(Schema);
-        _name = ""; _type = "string"; _description = ""; _required = false; _adding = false;
+        _name = "";
+        _type = "string";
+        _arrayType = "string";
+        _description = "";
+        _required = false;
+        _maxLength = null;
+        _adding = false;
     }
 
     private async Task RemoveField(int i)

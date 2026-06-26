@@ -1,5 +1,6 @@
 @page "/settings"
 @inject SettingsState SettingsState
+@inject RagApiService RagApi
 @implements IDisposable
 
 <div style="display:flex;flex-direction:column;height:100%;width:100%;overflow:hidden;">
@@ -64,5 +65,15 @@
     private string _active = "RAG Configuration";
 
     protected override void OnInitialized() => SettingsState.OnChange += StateHasChanged;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await RagApi.GetConfigurationAsync();
+        if (config is not null)
+        {
+            SettingsState.ApplyServerDefaults(config);
+        }
+    }
+
     public void Dispose() => SettingsState.OnChange -= StateHasChanged;
 }

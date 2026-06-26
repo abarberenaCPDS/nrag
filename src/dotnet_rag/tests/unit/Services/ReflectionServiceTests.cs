@@ -9,6 +9,11 @@ namespace DotnetRag.Tests.Unit.Services;
 
 public sealed class ReflectionServiceTests
 {
+    static ReflectionServiceTests()
+    {
+        Environment.SetEnvironmentVariable("APP_EMBEDDINGS_DIM", "384");
+    }
+
     private static ReflectionService Build(IChatCompletionService chat, int contextThreshold = 2, int groundThreshold = 2)
     {
         var cfg = RagServerConfiguration.FromEnvironment();

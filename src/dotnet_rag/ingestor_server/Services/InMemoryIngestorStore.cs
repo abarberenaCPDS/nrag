@@ -1,18 +1,28 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using DotnetRag.Ingestor.Models;
 
 namespace DotnetRag.Ingestor.Services;
 
-public sealed class InMemoryIngestorStore
+public sealed class InMemoryIngestorStore(IIngestorCatalogStore catalogStore)
 {
-    private readonly ConcurrentDictionary<string, CollectionEntry> _collections =
-        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, IngestorCatalogEntry> _collections =
+        new(
+            catalogStore.Load()
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Name))
+                .Select(entry => new KeyValuePair<string, IngestorCatalogEntry>(entry.Name, entry)),
+            StringComparer.OrdinalIgnoreCase);
+
+    public InMemoryIngestorStore()
+        : this(CreateCatalogStoreForEnvironment())
+    {
+    }
 
     public bool CollectionExists(string collectionName) => _collections.ContainsKey(collectionName);
 
     public bool CreateCollection(CreateCollectionRequest request)
     {
-        var entry = new CollectionEntry
+        var entry = new IngestorCatalogEntry
         {
             Name = request.CollectionName,
             Description = request.Description,
@@ -21,18 +31,18 @@ public sealed class InMemoryIngestorStore
             CreatedBy = request.CreatedBy,
             BusinessDomain = request.BusinessDomain,
             Status = request.Status,
-            MetadataSchema = request.MetadataSchema
-                .Select(field => new Dictionary<string, object?>
-                {
-                    ["name"] = field.Name,
-                    ["type"] = field.Type,
-                    ["description"] = field.Description,
-                    ["required"] = field.Required
-                })
+            MetadataSchema = MetadataSchemaValidator.NormalizeSchema(request.MetadataSchema)
+                .Select(field => new Dictionary<string, object?>(field))
                 .ToList()
         };
 
-        return _collections.TryAdd(request.CollectionName, entry);
+        var created = _collections.TryAdd(request.CollectionName, entry);
+        if (created)
+        {
+            PersistCatalog();
+        }
+
+        return created;
     }
 
     public IReadOnlyList<UploadedCollection> GetCollections()
@@ -42,7 +52,14 @@ public sealed class InMemoryIngestorStore
             {
                 CollectionName = collection.Name,
                 NumEntities = collection.Documents.Count,
-                MetadataSchema = [.. collection.MetadataSchema],
+                MetadataSchema = collection.MetadataSchema
+                    .Where(field => !field.TryGetValue("user_defined", out var userDefined)
+                        || userDefined is true
+                        || string.Equals(userDefined?.ToString(), "true", StringComparison.OrdinalIgnoreCase))
+                    .Select(field => field
+                        .Where(kv => kv.Key is not ("user_defined" or "support_dynamic_filtering"))
+                        .ToDictionary(kv => kv.Key, kv => kv.Value))
+                    .ToList(),
                 CollectionInfo = new Dictionary<string, object?>
                 {
                     ["description"] = collection.Description,
@@ -52,13 +69,23 @@ public sealed class InMemoryIngestorStore
                     ["business_domain"] = collection.BusinessDomain,
                     ["status"] = collection.Status
                 }
+                .Concat(BuildCollectionMetrics(collection.Documents))
+                .ToDictionary(kv => kv.Key, kv => kv.Value)
             })
             .OrderBy(item => item.CollectionName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    public bool DeleteCollection(string collectionName) =>
-        _collections.TryRemove(collectionName, out _);
+    public bool DeleteCollection(string collectionName)
+    {
+        var deleted = _collections.TryRemove(collectionName, out _);
+        if (deleted)
+        {
+            PersistCatalog();
+        }
+
+        return deleted;
+    }
 
     public bool UpdateCollectionMetadata(
         string collectionName,
@@ -97,6 +124,7 @@ public sealed class InMemoryIngestorStore
             }
         }
 
+        PersistCatalog();
         return true;
     }
 
@@ -140,6 +168,26 @@ public sealed class InMemoryIngestorStore
         }
     }
 
+    public IReadOnlyList<StoredDocument> GetStoredDocuments(string collectionName)
+    {
+        if (!_collections.TryGetValue(collectionName, out var collection))
+        {
+            return [];
+        }
+
+        lock (collection.SyncRoot)
+        {
+            return collection.Documents
+                .Select(document => new StoredDocument
+                {
+                    DocumentName = document.DocumentName,
+                    Metadata = new Dictionary<string, object?>(document.Metadata),
+                    DocumentInfo = new Dictionary<string, object?>(document.DocumentInfo)
+                })
+                .ToList();
+        }
+    }
+
     public void UpsertDocuments(
         string collectionName,
         IEnumerable<StoredDocument> documents,
@@ -173,6 +221,8 @@ public sealed class InMemoryIngestorStore
                 collection.Documents.Add(document);
             }
         }
+
+        PersistCatalog();
     }
 
     public List<string> DeleteDocuments(string collectionName, IEnumerable<string> documentNames)
@@ -191,6 +241,7 @@ public sealed class InMemoryIngestorStore
             {
                 deleted.AddRange(collection.Documents.Select(item => item.DocumentName));
                 collection.Documents.Clear();
+                PersistCatalog();
                 return deleted;
             }
 
@@ -206,6 +257,11 @@ public sealed class InMemoryIngestorStore
             });
         }
 
+        if (deleted.Count > 0)
+        {
+            PersistCatalog();
+        }
+
         return deleted;
     }
 
@@ -216,56 +272,36 @@ public sealed class InMemoryIngestorStore
         string documentName,
         IReadOnlyDictionary<string, object?> metadata)
     {
-        if (!_collections.TryGetValue(collectionName, out var collection))
-            return [];
-
-        var schema = collection.MetadataSchema;
-        if (schema.Count == 0) return [];
-
-        var errors = new List<string>();
-
-        foreach (var field in schema)
-        {
-            var name = field.TryGetValue("name", out var n) ? n?.ToString() : null;
-            if (string.IsNullOrEmpty(name)) continue;
-
-            var required = field.TryGetValue("required", out var r) && r is true or "true";
-            var expectedType = field.TryGetValue("type", out var t) ? t?.ToString() ?? "str" : "str";
-
-            if (!metadata.TryGetValue(name, out var value) || value is null)
-            {
-                if (required)
-                    errors.Add($"'{documentName}': required metadata field '{name}' is missing.");
-                continue;
-            }
-
-            var typeError = ValidateFieldType(name, value, expectedType);
-            if (typeError is not null)
-                errors.Add($"'{documentName}': {typeError}");
-        }
-
-        return errors;
+        return ValidateAndNormalizeDocumentMetadata(collectionName, documentName, metadata)
+            .Errors;
     }
 
-    private static string? ValidateFieldType(string fieldName, object? value, string expectedType)
+    public MetadataValidationResult ValidateAndNormalizeDocumentMetadata(
+        string collectionName,
+        string documentName,
+        IReadOnlyDictionary<string, object?> metadata)
     {
-        if (value is null) return null;
+        if (!_collections.TryGetValue(collectionName, out var collection))
+            return new MetadataValidationResult(
+                IsValid: true,
+                Errors: [],
+                NormalizedMetadata: new Dictionary<string, object?>(metadata));
 
-        return expectedType.ToLowerInvariant() switch
+        var schema = collection.MetadataSchema;
+        if (schema.Count == 0)
         {
-            "int" or "integer" => value is not (int or long or short or byte)
-                && !long.TryParse(value.ToString(), out _)
-                    ? $"field '{fieldName}' expected type int, got '{value.GetType().Name}'."
-                    : null,
-            "float" or "double" or "number" => value is not (float or double or decimal)
-                && !double.TryParse(value.ToString(), out _)
-                    ? $"field '{fieldName}' expected type float, got '{value.GetType().Name}'."
-                    : null,
-            "bool" or "boolean" => value is not bool
-                && !bool.TryParse(value.ToString(), out _)
-                    ? $"field '{fieldName}' expected type bool, got '{value.GetType().Name}'."
-                    : null,
-            _ => null // "str" and unknown types: accept any value
+            return new MetadataValidationResult(
+                IsValid: true,
+                Errors: [],
+                NormalizedMetadata: new Dictionary<string, object?>(metadata));
+        }
+
+        var validation = MetadataSchemaValidator.ValidateAndNormalize(schema, metadata);
+        return validation with
+        {
+            Errors = validation.Errors
+                .Select(error => $"'{documentName}': {error}")
+                .ToList()
         };
     }
 
@@ -299,8 +335,79 @@ public sealed class InMemoryIngestorStore
             }
         }
 
+        PersistCatalog();
         return true;
     }
+
+    private void PersistCatalog()
+    {
+        catalogStore.Save(_collections.Values
+            .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList());
+    }
+
+    private static IIngestorCatalogStore CreateCatalogStoreForEnvironment() =>
+        string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("APP_INGESTOR_CATALOG_PATH"))
+            ? new DisabledIngestorCatalogStore()
+            : new FileBackedIngestorCatalogStore();
+
+    private static Dictionary<string, object?> BuildCollectionMetrics(IReadOnlyList<StoredDocument> documents)
+    {
+        var docTypeCounts = documents
+            .Select(document => document.DocumentInfo.TryGetValue("document_type", out var type)
+                ? type?.ToString() ?? string.Empty
+                : string.Empty)
+            .Where(type => !string.IsNullOrWhiteSpace(type))
+            .GroupBy(type => type, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => (object?)group.Count(), StringComparer.OrdinalIgnoreCase);
+
+        long SumLong(string key) => documents.Sum(document =>
+        {
+            if (!document.DocumentInfo.TryGetValue(key, out var value) || value is null)
+            {
+                return 0L;
+            }
+
+            return value switch
+            {
+                long l => l,
+                int i => i,
+                _ => long.TryParse(value.ToString(), out var parsed) ? parsed : 0L
+            };
+        });
+
+        var lastIndexed = documents
+            .Select(document => document.DocumentInfo.TryGetValue("last_indexed", out var value)
+                ? value?.ToString()
+                : null)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .OrderByDescending(value => value, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        return new Dictionary<string, object?>
+        {
+            ["number_of_files"] = documents.Count,
+            ["doc_type_counts"] = docTypeCounts,
+            ["total_elements"] = SumLong("total_elements"),
+            ["raw_text_elements_size"] = SumLong("raw_text_elements_size"),
+            ["has_tables"] = documents.Any(document => IsTrue(document, "has_tables")),
+            ["has_charts"] = documents.Any(document => IsTrue(document, "has_charts")),
+            ["has_images"] = documents.Any(document => IsTrue(document, "has_images")),
+            ["last_indexed"] = lastIndexed,
+            ["ingestion_status"] = documents.Any(document => string.Equals(
+                document.DocumentInfo.GetValueOrDefault("ingestion_status")?.ToString(),
+                "failed",
+                StringComparison.OrdinalIgnoreCase))
+                ? "failed"
+                : documents.Count > 0 ? "completed" : "not_started"
+        };
+    }
+
+    private static bool IsTrue(StoredDocument document, string key) =>
+        document.DocumentInfo.TryGetValue(key, out var value)
+        && value is not null
+        && bool.TryParse(value.ToString(), out var parsed)
+        && parsed;
 
     public sealed class StoredDocument
     {
@@ -312,24 +419,45 @@ public sealed class InMemoryIngestorStore
         {
             return new UploadedDocument
             {
+                DocumentId = GetString(DocumentInfo, "document_id") ?? DocumentName,
                 DocumentName = DocumentName,
+                SizeBytes = GetLong(DocumentInfo, "size_bytes")
+                    ?? GetLong(DocumentInfo, "file_size")
+                    ?? 0,
                 Metadata = new Dictionary<string, object?>(Metadata),
                 DocumentInfo = new Dictionary<string, object?>(DocumentInfo)
             };
         }
+
+        private static string? GetString(
+            IReadOnlyDictionary<string, object?> values,
+            string key)
+        {
+            return values.TryGetValue(key, out var value)
+                && !string.IsNullOrWhiteSpace(value?.ToString())
+                ? value.ToString()
+                : null;
+        }
+
+        private static long? GetLong(
+            IReadOnlyDictionary<string, object?> values,
+            string key)
+        {
+            if (!values.TryGetValue(key, out var value) || value is null)
+            {
+                return null;
+            }
+
+            return value switch
+            {
+                long l => l,
+                int i => i,
+                JsonElement element when element.ValueKind == JsonValueKind.Number
+                    && element.TryGetInt64(out var parsed) => parsed,
+                _ when long.TryParse(value.ToString(), out var parsed) => parsed,
+                _ => null
+            };
+        }
     }
 
-    private sealed class CollectionEntry
-    {
-        public required string Name { get; init; }
-        public string Description { get; set; } = string.Empty;
-        public List<string> Tags { get; set; } = [];
-        public string Owner { get; set; } = string.Empty;
-        public string CreatedBy { get; set; } = string.Empty;
-        public string BusinessDomain { get; set; } = string.Empty;
-        public string Status { get; set; } = "Active";
-        public List<Dictionary<string, object?>> MetadataSchema { get; set; } = [];
-        public List<StoredDocument> Documents { get; } = [];
-        public object SyncRoot { get; } = new();
-    }
 }

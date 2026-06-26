@@ -39,21 +39,26 @@ public static class RagInfrastructureExtensions
         };
         services.AddSingleton(vectorStoreOpts);
 
-        // Embedding service — always Ollama for local; OpenAI-compatible NIM for cloud
+        // Embedding service — Ollama for local by default; OpenAI-compatible NIM for cloud.
         services.AddSingleton<IEmbeddingService>(sp =>
         {
-            var logger = sp.GetRequiredService<ILogger<OllamaEmbeddingService>>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            // ORIG_EMBED_MODEL: nvidia/llama-nemotron-embed-vl-1b-v2
-            // Ollama local: nomic-embed-text (768 dims) — best general-purpose
-            var model = config.EmbeddingModel is "nvidia/llama-nemotron-embed-vl-1b-v2"
-                or "" or null
-                ? "nomic-embed-text"
-                : config.EmbeddingModel;
+            var provider = config.EmbeddingProvider.Trim().ToLowerInvariant();
+            if (provider is "openai" or "openai-compatible" or "openai_compatible")
+            {
+                var openAiLogger = sp.GetRequiredService<ILogger<OpenAiEmbeddingService>>();
+                var apiKey = Environment.GetEnvironmentVariable("NVIDIA_API_KEY");
+                return new OpenAiEmbeddingService(
+                    factory,
+                    config.EmbeddingModel,
+                    config.EmbeddingEndpoint,
+                    apiKey,
+                    openAiLogger);
+            }
 
-            // ORIG_EMBED_ENDPOINT: nemotron-vlm-embedding-ms:8000/v1
+            var ollamaLogger = sp.GetRequiredService<ILogger<OllamaEmbeddingService>>();
             var baseUrl = NormalizeOllamaBase(config.EmbeddingEndpoint);
-            return new OllamaEmbeddingService(factory, model, baseUrl, logger);
+            return new OllamaEmbeddingService(factory, config.EmbeddingModel, baseUrl, ollamaLogger);
         });
 
         // Vector store — ChromaDB or Milvus based on APP_VECTORSTORE_NAME
@@ -75,11 +80,16 @@ public static class RagInfrastructureExtensions
                     logger);
             });
             services.AddSingleton<IVectorStore>(sp => sp.GetRequiredService<MilvusVectorStore>());
+            services.AddSingleton<IVectorStoreManagement>(sp => sp.GetRequiredService<MilvusVectorStore>());
+            services.AddSingleton<IVectorDocumentLookup>(sp => sp.GetRequiredService<MilvusVectorStore>());
         }
         else
         {
             services.AddSingleton<IVectorStore>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
+            services.AddSingleton<IVectorStoreManagement>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
+            services.AddSingleton<IVectorDocumentLookup>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
         }
+        services.AddSingleton<IVectorStoreClientFactory, VectorStoreClientFactory>();
 
         // Chat completion service — Ollama or OpenAI-compatible depending on APP_LLM_PROVIDER
         var llmProvider = config.LlmProvider.Trim().ToLowerInvariant();
@@ -89,14 +99,8 @@ public static class RagInfrastructureExtensions
             {
                 var logger = sp.GetRequiredService<ILogger<OllamaChatCompletionService>>();
                 var factory = sp.GetRequiredService<IHttpClientFactory>();
-                // ORIG_LLM_MODEL: nvidia/nemotron-3-super-120b-a12b
-                // Ollama nano model: qwen2.5:3b — 3B params, strong reasoning
-                var model = config.LlmModel is "nvidia/nemotron-3-super-120b-a12b"
-                    or "" or null
-                    ? "qwen2.5:3b"
-                    : config.LlmModel;
                 var baseUrl = NormalizeOllamaBase(config.LlmEndpoint);
-                return new OllamaChatCompletionService(factory, model, baseUrl, logger);
+                return new OllamaChatCompletionService(factory, config.LlmModel, baseUrl, logger);
             });
         }
         else
@@ -115,13 +119,24 @@ public static class RagInfrastructureExtensions
             });
         }
 
-        // VLM service — OpenAI-compatible multimodal endpoint (registered only when configured)
+        // VLM service — Ollama for local multimodal models, OpenAI-compatible for hosted NIM/OpenAI.
         if (!string.IsNullOrWhiteSpace(config.VlmEndpoint) && !string.IsNullOrWhiteSpace(config.VlmModel))
         {
             services.AddKeyedSingleton<IChatCompletionService>("vlm", (sp, _) =>
             {
-                var vlmLogger = sp.GetRequiredService<ILogger<OpenAiChatCompletionService>>();
                 var factory = sp.GetRequiredService<IHttpClientFactory>();
+                var provider = string.IsNullOrWhiteSpace(config.VlmProvider)
+                    ? config.LlmProvider
+                    : config.VlmProvider;
+
+                if (provider.Trim().Equals("ollama", StringComparison.OrdinalIgnoreCase))
+                {
+                    var ollamaLogger = sp.GetRequiredService<ILogger<OllamaChatCompletionService>>();
+                    var baseUrl = NormalizeOllamaBase(config.VlmEndpoint);
+                    return new OllamaChatCompletionService(factory, config.VlmModel, baseUrl, ollamaLogger);
+                }
+
+                var vlmLogger = sp.GetRequiredService<ILogger<OpenAiChatCompletionService>>();
                 var apiKey = Environment.GetEnvironmentVariable("NVIDIA_API_KEY");
                 return new OpenAiChatCompletionService(
                     factory, config.VlmModel, config.VlmEndpoint, apiKey, vlmLogger);
@@ -131,13 +146,40 @@ public static class RagInfrastructureExtensions
         // Summarization stack
         services.AddSingleton(new SummarizationRateLimiter(config.SummarizerMaxParallelization));
         services.AddSingleton<SummaryProgressTracker>();
+        services.AddSingleton<IObjectStore, DisabledSharedObjectStore>();
         services.AddSingleton<ISummarizationService, SummarizationService>();
 
         return services;
     }
 
+    private sealed class DisabledSharedObjectStore : IObjectStore
+    {
+        public bool IsEnabled => false;
+        public string BackendName => "disabled";
+
+        public Task StoreJsonAsync(
+            string collectionName,
+            string objectName,
+            IReadOnlyDictionary<string, object?> payload,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<IReadOnlyList<string>> ListAsync(
+            string collectionName,
+            string prefix,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
+
+        public Task DeleteAsync(
+            string collectionName,
+            IReadOnlyList<string> objectNames,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<bool> CheckHealthAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(true);
+    }
+
     /// <summary>
-    /// Strips /v1, /api/embeddings, /api/chat suffixes to get the bare Ollama base URL.
+    /// Strips native and OpenAI-compatible endpoint suffixes to get the bare Ollama base URL.
     /// </summary>
     private static string NormalizeOllamaBase(string url)
     {
@@ -148,7 +190,16 @@ public static class RagInfrastructureExtensions
             normalized = $"http://{normalized}";
         }
 
-        foreach (var suffix in new[] { "/v1/chat/completions", "/v1/embeddings", "/api/chat", "/api/embeddings", "/v1" })
+        foreach (var suffix in new[]
+        {
+            "/v1/chat/completions",
+            "/v1/embeddings",
+            "/api/generate",
+            "/api/chat",
+            "/api/embed",
+            "/api/embeddings",
+            "/v1"
+        })
         {
             if (normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
             {

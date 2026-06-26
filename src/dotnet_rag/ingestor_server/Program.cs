@@ -2,6 +2,9 @@ using System.Text.Json;
 using dotnet_rag.ingestor_server;
 using DotnetRag.Ingestor.Models;
 using DotnetRag.Ingestor.Services;
+using DotnetRag.Ingestor.Services.ObjectStore;
+using DotnetRag.Ingestor.Services.Telemetry;
+using DotnetRag.Shared.Abstractions;
 using DotnetRag.Shared.Configuration;
 using DotnetRag.Shared.Extensions;
 using DotnetRag.Shared.Options;
@@ -47,9 +50,51 @@ builder.Logging.SetMinimumLevel(ragConfig.LogLevel.ToUpperInvariant() switch
 // Register Ollama + ChromaDB infrastructure shared with rag_server
 builder.Services.AddRagInfrastructure(ragConfig);
 
+if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("APP_INGESTION_TASK_STORE_PATH")))
+{
+    builder.Services.AddSingleton<IIngestionTaskStore, FileBackedIngestionTaskStore>();
+}
+else
+{
+    builder.Services.AddSingleton<IIngestionTaskStore, InMemoryIngestionTaskStore>();
+}
+
+if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("APP_INGESTION_JOB_QUEUE_PATH")))
+{
+    builder.Services.AddSingleton<IIngestionJobQueue, FileBackedIngestionJobQueue>();
+}
+else
+{
+    builder.Services.AddSingleton<IIngestionJobQueue, InMemoryIngestionJobQueue>();
+}
+
 builder.Services.AddSingleton<IngestionTaskHandler>();
+if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("APP_INGESTOR_CATALOG_PATH")))
+{
+    builder.Services.AddSingleton<IIngestorCatalogStore, FileBackedIngestorCatalogStore>();
+}
+else
+{
+    builder.Services.AddSingleton<IIngestorCatalogStore, DisabledIngestorCatalogStore>();
+}
 builder.Services.AddSingleton<InMemoryIngestorStore>();
+builder.Services.AddSingleton<IIngestionPipeline>(sp =>
+    IngestionPipelineFactory.Create(sp.GetRequiredService<IHttpClientFactory>()));
+builder.Services.AddSingleton<IIngestionTelemetrySink, LoggingIngestionTelemetrySink>();
+if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("APP_OBJECT_STORE_ROOT")))
+{
+    builder.Services.AddSingleton<IObjectStoreService, FileObjectStoreService>();
+}
+else
+{
+    builder.Services.AddSingleton<IObjectStoreService, DisabledObjectStoreService>();
+}
+builder.Services.AddSingleton<IObjectStore>(sp => sp.GetRequiredService<IObjectStoreService>());
 builder.Services.AddSingleton<IngestorService>();
+if (IsWorkerRole())
+{
+    builder.Services.AddHostedService<IngestionWorkerService>();
+}
 
 var app = builder.Build();
 
@@ -81,7 +126,7 @@ app.MapPost("/documents", async (HttpRequest request, IngestorService service) =
         parsed.Files!,
         parsed.Payload!,
         isUpdate: false);
-    return Results.Ok(response);
+    return ToUploadResult(response);
 });
 
 app.MapPatch("/documents", async (HttpRequest request, IngestorService service) =>
@@ -97,7 +142,7 @@ app.MapPatch("/documents", async (HttpRequest request, IngestorService service) 
         parsed.Files!,
         parsed.Payload!,
         isUpdate: true);
-    return Results.Ok(response);
+    return ToUploadResult(response);
 });
 
 app.MapGet("/status", async (string task_id, IngestorService service) =>
@@ -155,13 +200,13 @@ app.MapPost(
             collectionNames = [service.DefaultCollectionName];
         }
 
-        var response = service.CreateCollections(vdb_endpoint, collectionNames);
+        var response = service.CreateCollections(request, vdb_endpoint, collectionNames);
         return Results.Ok(response);
     });
 
-app.MapPost("/collection", async (CreateCollectionRequest request, IngestorService service) =>
+app.MapPost("/collection", async (HttpRequest httpRequest, CreateCollectionRequest request, IngestorService service) =>
 {
-    var response = await service.CreateCollectionAsync(request);
+    var response = await service.CreateCollectionAsync(httpRequest, request);
     return Results.Ok(response);
 });
 
@@ -197,5 +242,18 @@ app.MapDelete(
         var response = await service.DeleteCollectionsAsync(request, collectionNames, vdb_endpoint);
         return Results.Ok(response);
     });
+
+static IResult ToUploadResult(object response) =>
+    response is UploadValidationErrorResponse
+        ? Results.UnprocessableEntity(response)
+        : Results.Ok(response);
+
+static bool IsWorkerRole()
+{
+    var role = Environment.GetEnvironmentVariable("APP_INGESTOR_ROLE");
+    return string.IsNullOrWhiteSpace(role)
+        || string.Equals(role, "all", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(role, "worker", StringComparison.OrdinalIgnoreCase);
+}
 
 await app.RunAsync();

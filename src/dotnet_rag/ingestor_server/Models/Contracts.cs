@@ -51,7 +51,9 @@ public sealed class DocumentUploadRequest
 
 public sealed class UploadedDocument
 {
+    public string DocumentId { get; set; } = string.Empty;
     public string DocumentName { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
     public Dictionary<string, object?> Metadata { get; set; } = [];
     public Dictionary<string, object?> DocumentInfo { get; set; } = [];
 }
@@ -71,6 +73,12 @@ public sealed class UploadDocumentResponse
     public List<UploadedDocument> Documents { get; set; } = [];
     public List<FailedDocument> FailedDocuments { get; set; } = [];
     public List<Dictionary<string, object?>> ValidationErrors { get; set; } = [];
+}
+
+public sealed class UploadValidationErrorResponse
+{
+    public string Message { get; set; } = string.Empty;
+    public int TotalDocuments { get; set; }
 }
 
 public sealed class IngestionTaskResponse
@@ -102,9 +110,13 @@ public sealed class DocumentListResponse
 public sealed class MetadataField
 {
     public string Name { get; set; } = string.Empty;
-    public string Type { get; set; } = "str";
+    public string Type { get; set; } = "string";
     public string Description { get; set; } = string.Empty;
     public bool Required { get; set; }
+    public bool UserDefined { get; set; } = true;
+    public bool SupportDynamicFiltering { get; set; } = true;
+    public string? ArrayType { get; set; }
+    public int? MaxLength { get; set; }
 }
 
 public sealed class UploadedCollection

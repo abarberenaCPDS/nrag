@@ -21,12 +21,19 @@ public sealed class SettingsState
         EnableQueryRewriting = s.GetValue("EnableQueryRewriting", false);
         EnableVlmInference = s.GetValue("EnableVlmInference", false);
         EnableFilterGenerator = s.GetValue("EnableFilterGenerator", false);
+        LlmProvider = s["LlmProvider"] ?? "";
         LlmModelName = s["LlmModelName"] ?? "";
         LlmServerUrl = s["LlmServerUrl"] ?? "";
+        EmbeddingProvider = s["EmbeddingProvider"] ?? "";
         EmbeddingModelName = s["EmbeddingModelName"] ?? "";
         EmbeddingServerUrl = s["EmbeddingServerUrl"] ?? "";
         RankingModelName = s["RankingModelName"] ?? "";
         RankingServerUrl = s["RankingServerUrl"] ?? "";
+        VlmProvider = s["VlmProvider"] ?? "";
+        VlmModelName = s["VlmModelName"] ?? "";
+        VlmServerUrl = s["VlmServerUrl"] ?? "";
+        IsDarkMode = s.GetValue("IsDarkMode", true);
+        UseLocalStorage = s.GetValue("UseLocalStorage", false);
     }
 
     // RAG config
@@ -52,6 +59,11 @@ public sealed class SettingsState
     public string RankingModelName { get; set; }
     public string VlmModelName { get; set; } = "";
 
+    // Providers
+    public string LlmProvider { get; set; } = "";
+    public string EmbeddingProvider { get; set; } = "";
+    public string VlmProvider { get; set; } = "";
+
     // Endpoints
     public string LlmServerUrl { get; set; }
     public string EmbeddingServerUrl { get; set; }
@@ -64,7 +76,7 @@ public sealed class SettingsState
 
     // UI
     public bool IsDarkMode { get; set; } = true;
-    public bool UseLocalStorage { get; set; } = true;
+    public bool UseLocalStorage { get; set; } = false;
 
     public event Action? OnChange;
 
@@ -103,6 +115,12 @@ public sealed class SettingsState
             VlmServerUrl = e.VlmServerUrl ?? "";
             VdbEndpoint = e.VdbEndpoint ?? "";
         }
+        if (config.Providers is { } p)
+        {
+            LlmProvider = p.LlmProvider ?? "";
+            EmbeddingProvider = p.EmbeddingProvider ?? "";
+            VlmProvider = p.VlmProvider ?? "";
+        }
         OnChange?.Invoke();
     }
 
@@ -116,6 +134,7 @@ public sealed class SettingsState
             EnableReranker, EnableCitations, EnableQueryRewriting, EnableGuardrails,
             EnableVlmInference, EnableFilterGenerator, AgenticMode,
             LlmModelName, EmbeddingModelName, RankingModelName, VlmModelName,
+            LlmProvider, EmbeddingProvider, VlmProvider,
             LlmServerUrl, EmbeddingServerUrl, RankingServerUrl, VlmServerUrl, VdbEndpoint,
             StopTokenList, IsDarkMode, UseLocalStorage
         });
@@ -144,6 +163,9 @@ public sealed class SettingsState
             if (r.TryGetProperty("EmbeddingModelName", out v)) EmbeddingModelName = v.GetString() ?? EmbeddingModelName;
             if (r.TryGetProperty("RankingModelName", out v)) RankingModelName = v.GetString() ?? RankingModelName;
             if (r.TryGetProperty("VlmModelName", out v)) VlmModelName = v.GetString() ?? VlmModelName;
+            if (r.TryGetProperty("LlmProvider", out v)) LlmProvider = v.GetString() ?? LlmProvider;
+            if (r.TryGetProperty("EmbeddingProvider", out v)) EmbeddingProvider = v.GetString() ?? EmbeddingProvider;
+            if (r.TryGetProperty("VlmProvider", out v)) VlmProvider = v.GetString() ?? VlmProvider;
             if (r.TryGetProperty("LlmServerUrl", out v)) LlmServerUrl = v.GetString() ?? LlmServerUrl;
             if (r.TryGetProperty("EmbeddingServerUrl", out v)) EmbeddingServerUrl = v.GetString() ?? EmbeddingServerUrl;
             if (r.TryGetProperty("RankingServerUrl", out v)) RankingServerUrl = v.GetString() ?? RankingServerUrl;

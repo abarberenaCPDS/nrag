@@ -10,6 +10,11 @@ namespace DotnetRag.Tests.Unit.Services;
 
 public sealed class QueryRewritingServiceTests
 {
+    static QueryRewritingServiceTests()
+    {
+        Environment.SetEnvironmentVariable("APP_EMBEDDINGS_DIM", "384");
+    }
+
     private static RagServerConfiguration Config(int history = 5, bool rewriting = true) =>
         new() { };  // uses defaults; ConversationHistory and EnableQueryRewriting are read from env
 

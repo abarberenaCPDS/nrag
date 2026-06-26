@@ -20,7 +20,7 @@ public sealed class InMemoryIngestorStoreTests
     // ── Schema validation ─────────────────────────────────────────────────────
 
     [Fact]
-    public void ValidateDocumentMetadata_ReturnsEmpty_WhenNoSchemaRegistered()
+    public void ValidateDocumentMetadata_RejectsUnknownField_WhenOnlySystemSchemaRegistered()
     {
         var store = new InMemoryIngestorStore();
         store.CreateCollection(new CreateCollectionRequest { CollectionName = "col" });
@@ -28,7 +28,7 @@ public sealed class InMemoryIngestorStoreTests
         var errors = store.ValidateDocumentMetadata("col", "doc.pdf",
             new Dictionary<string, object?> { ["anything"] = "value" });
 
-        errors.Should().BeEmpty();
+        errors.Should().ContainSingle().Which.Should().Contain("unexpected metadata field");
     }
 
     [Fact]
@@ -73,6 +73,49 @@ public sealed class InMemoryIngestorStoreTests
             new Dictionary<string, object?> { ["year"] = 2024 });
 
         errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ValidateDocumentMetadata_NormalizesDatetime_ToUtcZ()
+    {
+        var store = CreateWithSchema([new MetadataField { Name = "created_at", Type = "datetime" }]);
+
+        var validation = store.ValidateAndNormalizeDocumentMetadata(
+            "test_col",
+            "doc.pdf",
+            new Dictionary<string, object?> { ["created_at"] = "2024-01-15T10:30:00-05:00" });
+
+        validation.IsValid.Should().BeTrue();
+        validation.NormalizedMetadata["created_at"].Should().Be("2024-01-15T15:30:00Z");
+    }
+
+    [Fact]
+    public void ValidateDocumentMetadata_SupportsTypedArrays()
+    {
+        var store = CreateWithSchema(
+            [new MetadataField { Name = "years", Type = "array", ArrayType = "integer" }]);
+
+        var validation = store.ValidateAndNormalizeDocumentMetadata(
+            "test_col",
+            "doc.pdf",
+            new Dictionary<string, object?> { ["years"] = new object[] { "2024", 2025 } });
+
+        validation.IsValid.Should().BeTrue();
+        validation.NormalizedMetadata["years"].Should().BeEquivalentTo(new long[] { 2024, 2025 });
+    }
+
+    [Fact]
+    public void CreateCollection_RejectsReservedMetadataField()
+    {
+        var store = new InMemoryIngestorStore();
+
+        var act = () => store.CreateCollection(new CreateCollectionRequest
+        {
+            CollectionName = "col",
+            MetadataSchema = [new MetadataField { Name = "type", Type = "string" }]
+        });
+
+        act.Should().Throw<ArgumentException>().WithMessage("*reserved*");
     }
 
     [Fact]

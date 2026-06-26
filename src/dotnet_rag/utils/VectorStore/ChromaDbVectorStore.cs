@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -13,7 +14,7 @@ namespace DotnetRag.Shared.VectorStore;
 /// Talks to the Chroma HTTP API (v1) at the configured endpoint.
 /// ORIG_VECTORSTORE: milvus / elasticsearch / lancedb (langchain backends)
 /// </summary>
-public sealed class ChromaDbVectorStore : IVectorStore
+public sealed class ChromaDbVectorStore : IVectorStore, IVectorStoreManagement, IVectorDocumentLookup
 {
     private static readonly JsonSerializerOptions JsonOpts =
         new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
@@ -30,9 +31,15 @@ public sealed class ChromaDbVectorStore : IVectorStore
         IHttpClientFactory httpClientFactory,
         IEmbeddingService embedder,
         VectorStoreOptions opts,
-        ILogger<ChromaDbVectorStore> logger)
+        ILogger<ChromaDbVectorStore> logger,
+        string? token = null)
     {
         _http = httpClientFactory.CreateClient("chroma");
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
         _embedder = embedder;
         _opts = opts;
         _logger = logger;
@@ -85,6 +92,20 @@ public sealed class ChromaDbVectorStore : IVectorStore
         if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
         {
             response.EnsureSuccessStatusCode();
+        }
+    }
+
+    public async Task<bool> CheckHealthAsync(
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _http.GetAsync(CollectionsUrl, cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -166,7 +187,7 @@ public sealed class ChromaDbVectorStore : IVectorStore
         var ids = new List<string>(documents.Count);
         var texts = new List<string>(documents.Count);
         var embeddings = new List<IReadOnlyList<float>>(documents.Count);
-        var metadatas = new List<Dictionary<string, string>>(documents.Count);
+        var metadatas = new List<Dictionary<string, object?>>(documents.Count);
 
         foreach (var doc in documents)
         {
@@ -178,9 +199,12 @@ public sealed class ChromaDbVectorStore : IVectorStore
                 : await _embedder.EmbedAsync(doc.Text, cancellationToken);
             embeddings.Add(vec);
 
-            metadatas.Add(doc.Metadata is null
-                ? []
-                : doc.Metadata.ToDictionary(kv => kv.Key, kv => kv.Value));
+            var metadata = doc.Metadata is null
+                ? new Dictionary<string, object?>()
+                : doc.Metadata.ToDictionary(
+                    kv => kv.Key,
+                    kv => (object?)NormalizeMetadataValue(kv.Value));
+            metadatas.Add(metadata);
         }
 
         var url = $"{CollectionsUrl}/{colId}/upsert";
@@ -367,5 +391,15 @@ public sealed class ChromaDbVectorStore : IVectorStore
         var json = JsonSerializer.Serialize(payload, JsonOpts);
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
         return await _http.PostAsync(url, content, cancellationToken);
+    }
+
+    private static object NormalizeMetadataValue(object? value)
+    {
+        return value switch
+        {
+            null => string.Empty,
+            string or bool or int or long or float or double or decimal => value,
+            _ => JsonSerializer.Serialize(value, JsonOpts)
+        };
     }
 }

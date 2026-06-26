@@ -16,6 +16,8 @@ public static class PageFilter
                 => MatchesParity(pageNumber, el.GetString() ?? string.Empty),
             JsonElement { ValueKind: JsonValueKind.Array } el
                 => MatchesRanges(pageNumber, el, totalPages),
+            IEnumerable<IEnumerable<int>> ranges
+                => MatchesRanges(pageNumber, ranges, totalPages),
             _ => true
         };
     }
@@ -38,6 +40,31 @@ public static class PageFilter
 
             int start = items[0].GetInt32();
             int end = items[1].GetInt32();
+
+            if (totalPages.HasValue)
+            {
+                // Resolve negative indices (Python-style: -1 = last page)
+                if (start <= 0) start = totalPages.Value + start + 1;
+                if (end <= 0) end = totalPages.Value + end + 1;
+                start = Math.Clamp(start, 1, totalPages.Value);
+                end = Math.Clamp(end, 1, totalPages.Value);
+            }
+
+            if (start <= page && page <= end) return true;
+        }
+
+        return false;
+    }
+
+    private static bool MatchesRanges(int page, IEnumerable<IEnumerable<int>> ranges, int? totalPages)
+    {
+        foreach (var range in ranges)
+        {
+            var items = range.ToList();
+            if (items.Count < 2) continue;
+
+            var start = items[0];
+            var end = items[1];
 
             if (totalPages.HasValue)
             {

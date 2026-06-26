@@ -1,12 +1,9 @@
-using System.Collections.Concurrent;
 using DotnetRag.Ingestor.Models;
 
 namespace DotnetRag.Ingestor.Services;
 
-public sealed class IngestionTaskHandler
+public sealed class IngestionTaskHandler(IIngestionTaskStore taskStore)
 {
-    private readonly ConcurrentDictionary<string, IngestionTaskStatusResponse> _taskStates = new();
-
     public Task<string> SubmitTask(
         Func<string, Task<UploadDocumentResponse>> taskFactory,
         NvIngestStatusResponse initialNvIngestStatus,
@@ -16,12 +13,12 @@ public sealed class IngestionTaskHandler
             ? Guid.NewGuid().ToString()
             : taskId;
 
-        _taskStates[resolvedTaskId] = new IngestionTaskStatusResponse
+        taskStore.Set(resolvedTaskId, new IngestionTaskStatusResponse
         {
             State = "PENDING",
             Result = new UploadDocumentResponse(),
             NvIngestStatus = initialNvIngestStatus
-        };
+        });
 
         // Fire and forget — returns the task ID immediately so the HTTP response
         // is not blocked. State transitions (PENDING → FINISHED/FAILED) happen
@@ -30,17 +27,27 @@ public sealed class IngestionTaskHandler
         {
             try
             {
+                taskStore.Set(resolvedTaskId, new IngestionTaskStatusResponse
+                {
+                    State = "IN_PROGRESS",
+                    Result = new UploadDocumentResponse
+                    {
+                        Message = "Ingestion task is running."
+                    },
+                    NvIngestStatus = initialNvIngestStatus
+                });
+
                 var result = await taskFactory(resolvedTaskId);
-                _taskStates[resolvedTaskId] = new IngestionTaskStatusResponse
+                taskStore.Set(resolvedTaskId, new IngestionTaskStatusResponse
                 {
                     State = "FINISHED",
                     Result = result,
                     NvIngestStatus = BuildNvIngestStatus(result)
-                };
+                });
             }
             catch (Exception ex)
             {
-                _taskStates[resolvedTaskId] = new IngestionTaskStatusResponse
+                taskStore.Set(resolvedTaskId, new IngestionTaskStatusResponse
                 {
                     State = "FAILED",
                     Result = new UploadDocumentResponse
@@ -48,7 +55,7 @@ public sealed class IngestionTaskHandler
                         Message = ex.Message
                     },
                     NvIngestStatus = initialNvIngestStatus
-                };
+                });
             }
         });
 
@@ -57,7 +64,7 @@ public sealed class IngestionTaskHandler
 
     public IngestionTaskStatusResponse GetTaskStatusAndResult(string taskId)
     {
-        return _taskStates.TryGetValue(taskId, out var state)
+        return taskStore.TryGet(taskId, out var state)
             ? state
             : new IngestionTaskStatusResponse
             {
@@ -68,6 +75,16 @@ public sealed class IngestionTaskHandler
                 },
                 NvIngestStatus = new NvIngestStatusResponse()
             };
+    }
+
+    public void SetPending(string taskId, NvIngestStatusResponse initialNvIngestStatus)
+    {
+        taskStore.Set(taskId, new IngestionTaskStatusResponse
+        {
+            State = "PENDING",
+            Result = new UploadDocumentResponse(),
+            NvIngestStatus = initialNvIngestStatus
+        });
     }
 
     public static NvIngestStatusResponse BuildInitialNvIngestStatus(IEnumerable<string> filepaths)
@@ -84,7 +101,7 @@ public sealed class IngestionTaskHandler
         };
     }
 
-    private static NvIngestStatusResponse BuildNvIngestStatus(UploadDocumentResponse result)
+    public static NvIngestStatusResponse BuildNvIngestStatus(UploadDocumentResponse result)
     {
         var status = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var doc in result.Documents)

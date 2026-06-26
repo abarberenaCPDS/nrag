@@ -9,6 +9,11 @@ namespace DotnetRag.Tests.Unit.Services;
 
 public sealed class FilterExpressionServiceTests
 {
+    static FilterExpressionServiceTests()
+    {
+        Environment.SetEnvironmentVariable("APP_EMBEDDINGS_DIM", "384");
+    }
+
     private static FilterExpressionService Build(
         IChatCompletionService chat,
         IVectorStore? store = null,

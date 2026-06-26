@@ -109,7 +109,13 @@
                         </div>
 
                         <!-- Collection name subtitle -->
-                        <div style="font-size:11px;color:var(--text-muted);">@Collection.CollectionName</div>
+                        <div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <span>@Collection.CollectionName</span>
+                            @if (doc.SizeBytes > 0)
+                            {
+                                <span>@FormatSize(doc.SizeBytes)</span>
+                            }
+                        </div>
 
                         <!-- Doc tags -->
                         @if (docTags.Count > 0)
@@ -341,6 +347,19 @@
             return d?.ToString() ?? "";
         }
         return "";
+    }
+
+    private static string FormatSize(long size)
+    {
+        string[] units = ["B", "KB", "MB", "GB"];
+        double value = size;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value:0.#} {units[unit]}";
     }
 
     private void ToggleEdit(DocumentInfo doc)

@@ -105,11 +105,17 @@ public sealed record EndpointsDefaults(
     string VlmEndpoint,
     string VdbEndpoint);
 
+public sealed record ProvidersDefaults(
+    string LlmProvider,
+    string EmbeddingProvider,
+    string VlmProvider);
+
 public sealed record ConfigurationResponse(
     RagConfigurationDefaults RagConfiguration,
     FeatureTogglesDefaults FeatureToggles,
     ModelsDefaults Models,
-    EndpointsDefaults Endpoints);
+    EndpointsDefaults Endpoints,
+    ProvidersDefaults Providers);
 
 public sealed record RankingOptions(
     string Ranker = "auto",

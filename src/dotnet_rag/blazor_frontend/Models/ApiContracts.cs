@@ -246,13 +246,54 @@ public sealed class MetadataFieldDef
     public string Name { get; set; } = "";
 
     [JsonPropertyName("type")]
-    public string Type { get; set; } = "str";
+    public string Type { get; set; } = "string";
 
     [JsonPropertyName("description")]
     public string Description { get; set; } = "";
 
     [JsonPropertyName("required")]
     public bool Required { get; set; }
+
+    [JsonPropertyName("user_defined")]
+    public bool UserDefined { get; set; } = true;
+
+    [JsonPropertyName("support_dynamic_filtering")]
+    public bool SupportDynamicFiltering { get; set; } = true;
+
+    [JsonPropertyName("array_type")]
+    public string? ArrayType { get; set; }
+
+    [JsonPropertyName("max_length")]
+    public int? MaxLength { get; set; }
+
+    public MetadataFieldDef Normalized()
+    {
+        var type = NormalizeType(Type);
+        return new MetadataFieldDef
+        {
+            Name = Name.Trim(),
+            Type = type,
+            Description = Description,
+            Required = Required,
+            UserDefined = UserDefined,
+            SupportDynamicFiltering = SupportDynamicFiltering,
+            ArrayType = type == "array" ? NormalizeType(ArrayType) : null,
+            MaxLength = MaxLength is > 0 ? MaxLength : null
+        };
+    }
+
+    public static string NormalizeType(string? type)
+    {
+        return (type ?? "string").Trim().ToLowerInvariant() switch
+        {
+            "str" => "string",
+            "int" => "integer",
+            "bool" => "boolean",
+            "double" => "float",
+            "" => "string",
+            var value => value
+        };
+    }
 }
 
 public sealed class CollectionListResponse
@@ -295,8 +336,14 @@ public sealed class CreateCollectionRequest
 
 public sealed class DocumentInfo
 {
+    [JsonPropertyName("document_id")]
+    public string DocumentId { get; set; } = "";
+
     [JsonPropertyName("document_name")]
     public string DocumentName { get; set; } = "";
+
+    [JsonPropertyName("size_bytes")]
+    public long SizeBytes { get; set; }
 
     [JsonPropertyName("metadata")]
     public Dictionary<string, object?>? Metadata { get; set; }
@@ -420,6 +467,9 @@ public sealed class ConfigurationResponse
 
     [JsonPropertyName("endpoints")]
     public EndpointsConfig? Endpoints { get; set; }
+
+    [JsonPropertyName("providers")]
+    public ProvidersConfig? Providers { get; set; }
 }
 
 public sealed class RagConfigDefaults
@@ -497,6 +547,18 @@ public sealed class EndpointsConfig
     public string? VdbEndpoint { get; set; }
 }
 
+public sealed class ProvidersConfig
+{
+    [JsonPropertyName("llm_provider")]
+    public string? LlmProvider { get; set; }
+
+    [JsonPropertyName("embedding_provider")]
+    public string? EmbeddingProvider { get; set; }
+
+    [JsonPropertyName("vlm_provider")]
+    public string? VlmProvider { get; set; }
+}
+
 // ── Filters ───────────────────────────────────────────────────────────────────
 
 public sealed class FilterCondition
@@ -523,7 +585,7 @@ public sealed class NewCollectionForm
     public string Owner { get; set; } = "";
     public string BusinessDomain { get; set; } = "";
     public string Status { get; set; } = "Active";
-    public bool GenerateSummary { get; set; }
+    public bool GenerateSummary { get; set; } = true;
     public List<MetadataFieldDef> Schema { get; set; } = [];
     public List<UploadFile> Files { get; set; } = [];
 }

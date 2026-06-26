@@ -134,7 +134,16 @@ public sealed class OllamaRerankerProvider(
 
         normalized = normalized.TrimEnd('/');
 
-        foreach (var suffix in new[] { "/api/embed", "/v1", "/v1/embeddings", "/api/embeddings", "/api/chat" })
+        foreach (var suffix in new[]
+        {
+            "/v1/chat/completions",
+            "/v1/embeddings",
+            "/api/generate",
+            "/api/chat",
+            "/api/embed",
+            "/api/embeddings",
+            "/v1"
+        })
         {
             if (normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
             {

@@ -22,6 +22,9 @@ public sealed class IngestorApiService(HttpClient http)
     {
         try
         {
+            request.MetadataSchema = request.MetadataSchema
+                .Select(field => field.Normalized())
+                .ToList();
             var resp = await http.PostAsJsonAsync("/collection", request, ct);
             return resp.IsSuccessStatusCode;
         }

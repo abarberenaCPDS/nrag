@@ -1,16 +1,18 @@
 using DotnetRag.Shared.Abstractions;
 using DotnetRag.Shared.Configuration;
 using DotnetRag.Shared.Summarization.Strategies;
-using DotnetRag.Shared.VectorStore;
 using Microsoft.Extensions.Logging;
 
 namespace DotnetRag.Shared.Summarization;
 
 // ORIG: nvidia_rag/utils/summarization.py::generate_document_summaries + _process_single_file_summary
-// Stores summaries in ChromaDB collection "summary_{collectionName}" instead of MinIO object store.
+// Stores summaries in provider-selected vector collection "summary_{collectionName}" and object store when enabled.
 public sealed class SummarizationService(
     IChatCompletionService chat,
-    ChromaDbVectorStore chromaStore,
+    IVectorStore vectorStore,
+    IVectorStoreManagement vectorStoreManagement,
+    IVectorDocumentLookup documentLookup,
+    IObjectStore objectStore,
     RagServerConfiguration config,
     SummarizationRateLimiter rateLimiter,
     SummaryProgressTracker progressTracker,
@@ -34,7 +36,7 @@ public sealed class SummarizationService(
             documents.Count, collectionName, options.Strategy);
 
         var summaryCollection = $"{SummaryCollectionPrefix}{collectionName}";
-        await chromaStore.EnsureCollectionAsync(summaryCollection, cancellationToken);
+        await vectorStoreManagement.EnsureCollectionAsync(summaryCollection, cancellationToken);
 
         var tasks = documents
             .Where(d => !string.IsNullOrWhiteSpace(d.Text))
@@ -64,7 +66,7 @@ public sealed class SummarizationService(
     {
         var summaryCollection = $"{SummaryCollectionPrefix}{collectionName}";
         var summaryId = $"{SummaryIdPrefix}{fileName}";
-        return await chromaStore.GetDocumentTextByIdAsync(summaryCollection, summaryId, cancellationToken);
+        return await documentLookup.GetDocumentTextByIdAsync(summaryCollection, summaryId, cancellationToken);
     }
 
     // ── Per-file pipeline ─────────────────────────────────────────────────────
@@ -127,14 +129,28 @@ public sealed class SummarizationService(
         var doc = new VectorDocument(
             Id: $"{SummaryIdPrefix}{fileName}",
             Text: summaryText,
-            Metadata: new Dictionary<string, string>
+            Metadata: new Dictionary<string, object?>
             {
                 ["filename"] = fileName,
                 ["collection_name"] = collectionName,
                 ["type"] = "summary"
             });
 
-        await chromaStore.UpsertAsync(summaryCollection, [doc], ct);
+        await vectorStore.UpsertAsync(summaryCollection, [doc], ct);
+        if (objectStore.IsEnabled)
+        {
+            await objectStore.StoreJsonAsync(
+                summaryCollection,
+                fileName,
+                new Dictionary<string, object?>
+                {
+                    ["filename"] = fileName,
+                    ["collection_name"] = collectionName,
+                    ["summary"] = summaryText
+                },
+                ct);
+        }
+
         logger.LogDebug("Stored summary for '{File}' in collection '{Collection}'", fileName, summaryCollection);
     }
 

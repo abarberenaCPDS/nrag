@@ -79,19 +79,63 @@ pnpm run test:run
 
 ## .NET architecture
 
-### Key design decision: .NET ingestor has its own in-memory store
+### Current parity status
 
-The .NET ingestor (`InMemoryIngestorStore`) is **not** a proxy to the Python ingestor. It maintains its own in-memory collection/document state. Collections created via the React frontend (Python API) are invisible to the Blazor frontend (.NET ingestor), and vice versa. ChromaDB is shared for vector search, but collection metadata is separate.
+The `.NET` implementation has been moved substantially closer to Python API parity. Before changing ingestor/RAG behavior, read:
+
+- `python-analysis.md` — running findings and parity decisions from the migration work.
+- `fixtures/parity-dashboard.md` — fixture status and known runtime blockers.
+
+Current hard runtime blocker: full Python upload parity still needs NV-Ingest on `localhost:7670`. Local Redis (`abes-redis`), SeaweedFS (`abes-seaweedfs`), Milvus (`abes-milvus`), ChromaDB, and Ollama have been used for validation, but the NV-Ingest image `nvcr.io/nvidia/nemo-microservices/nv-ingest:26.3.0` requires NVCR/NGC access or a pre-pulled image.
+
+### .NET ingestor catalog/store
+
+The .NET ingestor (`InMemoryIngestorStore`) is no longer just a hard-coded in-memory-only catalog. It is an in-process cache over `IIngestorCatalogStore`:
+
+- `DisabledIngestorCatalogStore` — default true in-memory behavior.
+- `FileBackedIngestorCatalogStore` — enabled with `APP_INGESTOR_CATALOG_PATH`.
+
+This preserves .NET-created collection/document metadata across restarts when configured and supports the queued worker split. A future backend-shared catalog should be implemented as another `IIngestorCatalogStore` rather than re-hard-coding persistence into `InMemoryIngestorStore`.
 
 ### Service wiring (`utils/`)
 
 `RagInfrastructureExtensions.AddRagInfrastructure()` is called by both `rag_server` and `ingestor_server` to register:
 - **LLM provider** — Ollama (`OllamaChatCompletionService`) or OpenAI-compatible NIM (`OpenAiChatCompletionService`) based on `APP_LLM_PROVIDER`
-- **Embeddings** — `OllamaEmbeddingService` (defaults to `nomic-embed-text` locally)
+- **Embeddings** — Ollama (`OllamaEmbeddingService`) or OpenAI-compatible (`OpenAiEmbeddingService`) based on `APP_EMBEDDINGS_PROVIDER`
 - **Vector store** — `ChromaDbVectorStore` or `MilvusVectorStore` based on `APP_VECTORSTORE_NAME`
-- **Summarization** — `SummarizationService` with `SummaryProgressTracker` and rate limiter
+- **Summarization** — `SummarizationService` with `SummaryProgressTracker` and rate limiter. It is provider-selected through `IVectorStore`, `IVectorStoreManagement`, and `IVectorDocumentLookup`; do not reintroduce a concrete `ChromaDbVectorStore` dependency.
+
+Current Ollama endpoints are native/current API routes:
+- embeddings: `POST /api/embed`
+- chat: `POST /api/chat`
+- health/model listing: `GET /api/tags`
 
 All services read `RagServerConfiguration` which is populated from environment variables (loaded from `deploy/compose/dotnet-local.env` at startup via `DotnetRagEnvironmentBootstrap`).
+
+### Ingestor pipeline and worker split
+
+The ingestor has an `IIngestionPipeline` boundary:
+
+- `LocalIngestionPipeline` — local dev/default extraction.
+- `HttpExternalIngestionPipeline` — calls an external Python/NV-Ingest/NRL bridge.
+- `ExternalIngestionPipeline` — fail-fast placeholder when an external backend is selected without an endpoint.
+
+Backend selection:
+- `APP_INGESTION_BACKEND=local|nvingest|nrl`
+- `APP_NVINGEST_ENDPOINT`, `APP_NRL_ENDPOINT`, or `APP_INGESTION_ENDPOINT`
+- optional `APP_INGESTION_API_KEY`
+
+Python exposes `POST /bridge/extract` for this contract. Real bridge execution is opt-in:
+- `APP_BRIDGE_USE_REAL_NVINGEST=true`
+- `APP_BRIDGE_USE_REAL_NRL=true`
+
+The .NET ingestor also supports queued execution:
+- `APP_INGESTION_EXECUTION_MODE=queued`
+- `APP_INGESTOR_ROLE=api|worker|all`
+- `APP_INGESTION_JOB_QUEUE_PATH`
+- `APP_INGESTION_TASK_STORE_PATH`
+
+Docker compose now includes `dotnet-ingestion-worker`, sharing `dotnet-ingestor-data:/tmp-data` with the API service.
 
 ### Blazor frontend architecture
 
@@ -116,30 +160,39 @@ These apply when writing or reviewing `blazor_frontend/Models/ApiContracts.cs`:
 
 2. **`document_info` vs `metadata` are separate** — `UploadedDocument` has two dictionaries: `metadata` (schema-defined custom fields) and `document_info` (catalog metadata: description, tags, upload_path set at upload time). `DocumentInfo` in `ApiContracts.cs` maps both via `[JsonPropertyName("document_info")] DocumentInfoData`. When reading doc tags/description, check `DocumentInfoData` first.
 
-3. **Type identifier is `"str"` not `"string"`** — `MetadataFieldDef.Type` defaults to `"str"`. Valid values: `"str"`, `"int"`, `"float"`, `"bool"`.
+3. **Metadata type identifiers are Python-compatible** — use canonical values: `"string"`, `"datetime"`, `"number"`, `"integer"`, `"float"`, `"boolean"`, `"array"`. Legacy aliases (`"str"`, `"int"`, `"double"`, `"bool"`) are accepted/normalized by the server for compatibility.
 
 4. **List fields are non-nullable** — `List<string> Tags { get; set; } = []`, not `List<string>?`.
 
 5. **PATCH requests use `null` as "don't update"** — `UpdateCollectionMetadataRequest` fields are `string?` intentionally; `null` means "leave unchanged".
 
-### Two-step collection creation
+### Collection creation and upload
 
 ```
 POST /collection  →  create with schema + metadata
 POST /documents   →  upload files (optional, separate step)
 ```
 
-The collection must exist before documents can be uploaded. Do not skip the first step.
+The Blazor UI still uses the create-then-upload flow, but the .NET API now matches Python by auto-creating a missing collection during `POST /documents`.
+
+`NewCollectionForm.GenerateSummary` defaults to `true`; keep the "Generate document summaries" UI enabled by default unless intentionally changing parity.
 
 ### Local environment
 
 `deploy/compose/dotnet-local.env` is loaded automatically at startup. Key vars:
 - `APP_LLM_PROVIDER` — `ollama` or `openai`
-- `APP_VECTORSTORE_NAME` — `chroma` (default) or `milvus`
-- `APP_VECTORSTORE_URL` — ChromaDB endpoint (default `http://localhost:8000`)
+- `APP_VECTORSTORE_NAME` — `chroma` or `milvus`
+- `APP_VECTORSTORE_URL` — ChromaDB endpoint (`http://localhost:8000`) or Milvus REST endpoint (`http://localhost:19530`)
 - `APP_EMBEDDINGS_SERVERURL` / `APP_LLM_SERVERURL` — Ollama base URL
 
 Start infrastructure only: `docker compose -f deploy/compose/docker-compose-dotnet.yaml up chromadb ollama ollama-init`
+
+Current local parity containers used in validation:
+- `abes-milvus` — Milvus REST on `19530`, health on `9091`
+- `abes-redis` — Redis on `6379`
+- `abes-seaweedfs` — SeaweedFS S3/object store on `9010`/`9011`
+- `chromadb` — ChromaDB on `8000` (Docker health may be stale if container predates healthcheck fix)
+- host Ollama — `127.0.0.1:11434`
 
 ### JSON serialization
 
@@ -171,10 +224,48 @@ Both `rag_server` and `ingestor_server` configure `ConfigureHttpJsonOptions` wit
 - `src/dotnet_rag/utils/Configuration/RagServerConfiguration.cs` — all env var mappings
 - `src/dotnet_rag/ingestor_server/Models/Contracts.cs` — ground truth for ingestor server-side types
 - `src/dotnet_rag/ingestor_server/Services/InMemoryIngestorStore.cs` — collection/document storage
+- `src/dotnet_rag/ingestor_server/Services/IIngestorCatalogStore.cs` — catalog persistence abstraction
+- `src/dotnet_rag/ingestor_server/Services/IIngestionPipeline.cs` — local/external ingestion pipeline abstraction
+- `src/dotnet_rag/ingestor_server/Services/IIngestionJobQueue.cs` — queued worker abstraction
+- `src/dotnet_rag/utils/VectorStore/MilvusVectorStore.cs` — Milvus REST provider; adapts to Python/NV-Ingest canonical schema
 - `src/dotnet_rag/blazor_frontend/Models/ApiContracts.cs` — Blazor client-side models (must mirror ingestor contracts)
 - `deploy/compose/dotnet-local.env` — local dev environment variables
+- `fixtures/run_python_full_baseline.py` — Python dependency preflight and full-baseline runner
+- `fixtures/run_external_ingestion_bridge_validation.py` — external bridge contract validator
+- `fixtures/run_ingestor_fixtures.py` — ingestor fixture runner
+- `fixtures/run_dotnet_rag_fixtures.py` — isolated .NET RAG fixture runner
+- `fixtures/run_python_rag_mock_fixtures.py` — Python RAG baseline against mocked OpenAI/NIM-compatible endpoints
+- `python-analysis.md` — migration findings log
+- `fixtures/parity-dashboard.md` — parity status summary
 - `pyproject.toml` — Python deps and ruff config
 - `src/nvidia_rag/rag_server/prompt.yaml` — system prompt templates
+
+## Parity validation commands
+
+```bash
+# Full .NET verification
+dotnet test src/dotnet_rag/DotnetRag.sln --no-restore
+dotnet list src/dotnet_rag/DotnetRag.sln package --vulnerable --include-transitive
+
+# Python syntax check for fixture/bridge scripts
+uv run python -m py_compile \
+  fixtures/run_python_full_baseline.py \
+  fixtures/run_external_ingestion_bridge_validation.py \
+  fixtures/run_ingestor_fixtures.py \
+  src/nvidia_rag/ingestor_server/server.py
+
+# Python full baseline preflight; currently blocks only on NV-Ingest if Redis,
+# SeaweedFS, Milvus, Ollama, and Python ingestor are running.
+uv run python fixtures/run_python_full_baseline.py \
+  --base-url http://127.0.0.1:18097 \
+  --out /tmp/python-full-baseline-preflight.json
+
+# Run full Python fixtures only after preflight passes.
+uv run python fixtures/run_python_full_baseline.py \
+  --base-url http://127.0.0.1:18097 \
+  --run-fixtures \
+  --out /tmp/python-full-baseline.json
+```
 
 ## PR and commit guidelines
 

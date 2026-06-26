@@ -12,6 +12,8 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="KubernetesClient" PrivateAssets="all" />
+    <PackageReference Include="MessagePack" PrivateAssets="all" />
     <ProjectReference Include="..\blazor_frontend\DotnetRag.Blazor.csproj" />
   </ItemGroup>
 </Project>
