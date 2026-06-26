@@ -429,3 +429,8 @@ This makes the .NET side ready to call a thin NV-Ingest/NRL wrapper service, whi
 - `UseLocalStorage` must be false for the `.NET` Blazor frontend.
 - The setting lives under the Blazor `Settings` configuration section, so compose/env overrides must use `Settings__UseLocalStorage=false`.
 - Updated `SettingsState` to actually read `Settings:UseLocalStorage`; previously the appsettings/env value existed but the state default stayed enabled.
+
+## Blazor VLM Model Display
+
+- The Settings > Model Configuration tab should expose `VLM Model`, not `VLM Provider`, because provider selection is a service-routing concern while the model tab is for model names.
+- Backend configuration remains correctly split: `models.vlm_model` populates `SettingsState.VlmModelName`, and `providers.vlm_provider` remains available for Ollama/OpenAI service routing.
