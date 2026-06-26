@@ -28,7 +28,7 @@
 
         @if (Message.ReasoningSteps.Count > 0)
         {
-            <ReasoningPanel Steps="Message.ReasoningSteps" />
+            <ReasoningPanel Steps="Message.ReasoningSteps" IsStreaming="Message.IsStreaming" />
         }
 
         @if (Message.Citations.Count > 0)

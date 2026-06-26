@@ -2,7 +2,7 @@
 @inject IngestorApiService IngestorApi
 @implements IDisposable
 
-<div style="position:relative;z-index:1002;">
+<div style="position:relative;">
     <button class="nav-icon-btn" title="Notifications" aria-label="Notifications"
             style="position:relative;" @onclick="TogglePanel">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -18,8 +18,8 @@
 
 @if (_open)
 {
-    <div style="position:fixed;inset:0;z-index:1000;" @onclick="Close"></div>
-    <div class="ntf-panel" @onclick:stopPropagation="true">
+    <div style="position:fixed;inset:0;z-index:9998;" @onclick="Close"></div>
+    <div class="ntf-panel" style="position:fixed;top:60px;right:8px;width:400px;max-height:520px;overflow-y:auto;z-index:9999;" @onclick:stopPropagation="true">
         <div class="ntf-header">
             <span style="font-size:18px;font-weight:600;">Notifications</span>
             <button class="ntf-clear-btn" @onclick="ClearAll" title="Clear All">
@@ -44,15 +44,17 @@
         }
         else
         {
-            <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.05em;">
+            <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px;">
                 Ingestion Tasks (@visible.Count)
             </div>
             @foreach (var task in visible)
             {
-                var progress = task.TotalDocuments > 0 ? (double)task.DocumentsCompleted / task.TotalDocuments * 100 : 0;
-                var borderColor = task.State == "FINISHED" ? "#76B900" : task.State == "FAILED" ? "var(--error)" : "var(--border)";
+                var progress = task.State == "FINISHED"
+                    ? (task.TotalDocuments > 0 ? (double)task.DocumentsCompleted / task.TotalDocuments * 100 : 100.0)
+                    : 0.0;
+                var borderColor = "#76B900";
                 var statusText = task.State == "FINISHED" ? "Completed" : task.State == "FAILED" ? "Failed" : "Processing";
-                var barColor = task.State == "FINISHED" ? "#76B900" : task.State == "FAILED" ? "var(--error)" : "var(--border)";
+                var barColor = task.State == "FINISHED" ? "#76B900" : "var(--border)";
 
                 <div class="ntf-task-card" style="border-color:@borderColor;">
                     <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;">
@@ -93,6 +95,10 @@
                     <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
                         <div style="height:100%;width:@(progress.ToString("F0", System.Globalization.CultureInfo.InvariantCulture))%;background:@barColor;border-radius:3px;transition:width 0.3s ease;"></div>
                     </div>
+                    @if (task.ErrorMessage is { Length: > 0 } err)
+                    {
+                        <div style="font-size:11px;color:var(--error);margin-top:6px;word-break:break-word;">@err</div>
+                    }
                 </div>
             }
         }
@@ -130,11 +136,21 @@
             {
                 var status = await IngestorApi.GetTaskStatusAsync(task.TaskId);
                 if (status?.State is null) continue;
-                NotifState.UpdateTask(
-                    task.TaskId,
-                    status.State,
+                string? errMsg = null;
+                if (status.State == "FAILED")
+                {
+                    errMsg = status.Result?.Message;
+                    if (string.IsNullOrEmpty(errMsg) && status.Result?.FailedDocuments.Count > 0)
+                        errMsg = status.Result.FailedDocuments[0].ErrorMessage;
+                }
+                NotifState.UpdateTask(task.TaskId, status.State,
                     status.Result?.DocumentsCompleted ?? 0,
-                    status.Result?.TotalDocuments ?? 0);
+                    status.Result?.TotalDocuments ?? 0,
+                    errorMessage: errMsg);
+            }
+            catch (HttpRequestException ex)
+            {
+                NotifState.UpdateTask(task.TaskId, "FAILED", 0, task.TotalDocuments, errorMessage: ex.Message);
             }
             catch { }
         }

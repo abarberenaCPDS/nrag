@@ -254,10 +254,7 @@
 
         var result = await IngestorApi.UploadDocumentsAsync(
             _form.CollectionName, _form.Files, _form.Schema,
-            _form.Description, _form.Tags, _form.GenerateSummary,
-            owner: string.IsNullOrEmpty(_form.Owner) ? null : _form.Owner,
-            businessDomain: string.IsNullOrEmpty(_form.BusinessDomain) ? null : _form.BusinessDomain,
-            status: _form.Status);
+            _form.Description, _form.Tags, _form.GenerateSummary);
 
         if (result?.TaskId is null)
         {

@@ -87,9 +87,9 @@
 
                 var delta = chunk.Choices?[0]?.Delta;
 
-                // Resolve event_type from delta first (PR #512), fall back to top-level chunk
-                var evtType = delta?.EventType ?? chunk.EventType;
-                var stage   = delta?.Stage   ?? chunk.Stage;
+                // event_type and stage are top-level ChainResponse fields only (not in delta/Message)
+                var evtType = chunk.EventType;
+                var stage   = chunk.Stage;
 
                 // Route by event type — mirrors useChatStream.ts logic
                 if (evtType == "stage_start")
@@ -116,6 +116,8 @@
                 }
                 else if (evtType == "error")
                 {
+                    if (delta?.ReasoningContent is { Length: > 0 } errRc)
+                        ChatState.AddReasoningContent(assistantMsg.Id, stage, errRc, isOutput: true);
                     ChatState.CloseAllReasoningSteps(assistantMsg.Id, isError: true);
                 }
                 else if (evtType is not null and not "__error__")
@@ -203,7 +205,16 @@
             Agentic = Settings.AgenticMode,
             ConfidenceThreshold = Settings.ConfidenceThreshold,
             EnableStreaming = true,
-            VdbEndpoint = string.IsNullOrEmpty(Settings.VdbEndpoint) ? null : Settings.VdbEndpoint
+            VdbEndpoint = string.IsNullOrEmpty(Settings.VdbEndpoint) ? null : Settings.VdbEndpoint,
+            Model = string.IsNullOrEmpty(Settings.LlmModelName) ? null : Settings.LlmModelName,
+            EmbeddingModel = string.IsNullOrEmpty(Settings.EmbeddingModelName) ? null : Settings.EmbeddingModelName,
+            RerankerModel = string.IsNullOrEmpty(Settings.RankingModelName) ? null : Settings.RankingModelName,
+            VlmModel = string.IsNullOrEmpty(Settings.VlmModelName) ? null : Settings.VlmModelName,
+            LlmEndpoint = string.IsNullOrEmpty(Settings.LlmServerUrl) ? null : Settings.LlmServerUrl,
+            EmbeddingEndpoint = string.IsNullOrEmpty(Settings.EmbeddingServerUrl) ? null : Settings.EmbeddingServerUrl,
+            RerankerEndpoint = string.IsNullOrEmpty(Settings.RankingServerUrl) ? null : Settings.RankingServerUrl,
+            VlmEndpoint = string.IsNullOrEmpty(Settings.VlmServerUrl) ? null : Settings.VlmServerUrl,
+            Stop = Settings.StopTokenList.Count > 0 ? Settings.StopTokenList : null
         };
     }
 

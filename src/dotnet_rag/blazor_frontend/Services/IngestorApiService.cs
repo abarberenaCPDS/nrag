@@ -90,9 +90,6 @@ public sealed class IngestorApiService(HttpClient http)
         string? description,
         List<string>? tags,
         bool generateSummary,
-        string? owner = null,
-        string? businessDomain = null,
-        string? status = null,
         CancellationToken ct = default)
     {
         try
@@ -105,9 +102,6 @@ public sealed class IngestorApiService(HttpClient http)
                 collection_name = collectionName,
                 blocking = false,
                 generate_summary = generateSummary,
-                owner,
-                business_domain = businessDomain,
-                status,
                 documents_catalog_metadata = filesList.Select(f => new
                 {
                     filename = f.Name,
@@ -138,15 +132,8 @@ public sealed class IngestorApiService(HttpClient http)
 
     public async Task<IngestionTaskStatus?> GetTaskStatusAsync(string taskId, CancellationToken ct = default)
     {
-        try
-        {
-            return await http.GetFromJsonAsync<IngestionTaskStatus>(
-                $"/status?task_id={Uri.EscapeDataString(taskId)}", ct);
-        }
-        catch
-        {
-            return null;
-        }
+        return await http.GetFromJsonAsync<IngestionTaskStatus>(
+            $"/status?task_id={Uri.EscapeDataString(taskId)}", ct);
     }
 
     public async Task<bool> UpdateDocumentMetadataAsync(

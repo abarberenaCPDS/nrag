@@ -60,12 +60,7 @@ public sealed class StreamDelta
 
     [JsonPropertyName("reasoning_content")]
     public string? ReasoningContent { get; set; }
-
-    [JsonPropertyName("event_type")]
-    public string? EventType { get; set; }
-
-    [JsonPropertyName("stage")]
-    public string? Stage { get; set; }
+    // event_type and stage are top-level ChainResponse fields only — not in Message/delta
 }
 
 // ── Request Types ─────────────────────────────────────────────────────────────
@@ -128,6 +123,33 @@ public sealed class GenerateRequest
 
     [JsonPropertyName("vdb_endpoint")]
     public string? VdbEndpoint { get; set; }
+
+    [JsonPropertyName("model")]
+    public string? Model { get; set; }
+
+    [JsonPropertyName("embedding_model")]
+    public string? EmbeddingModel { get; set; }
+
+    [JsonPropertyName("reranker_model")]
+    public string? RerankerModel { get; set; }
+
+    [JsonPropertyName("vlm_model")]
+    public string? VlmModel { get; set; }
+
+    [JsonPropertyName("llm_endpoint")]
+    public string? LlmEndpoint { get; set; }
+
+    [JsonPropertyName("embedding_endpoint")]
+    public string? EmbeddingEndpoint { get; set; }
+
+    [JsonPropertyName("reranker_endpoint")]
+    public string? RerankerEndpoint { get; set; }
+
+    [JsonPropertyName("vlm_endpoint")]
+    public string? VlmEndpoint { get; set; }
+
+    [JsonPropertyName("stop")]
+    public List<string>? Stop { get; set; }
 }
 
 public sealed class MessagePayload
@@ -143,12 +165,18 @@ public sealed class MessagePayload
 
 public sealed class CitationsWrapper
 {
+    [JsonPropertyName("total_results")]
+    public int TotalResults { get; set; }
+
     [JsonPropertyName("results")]
     public List<Citation> Results { get; set; } = [];
 }
 
 public sealed class Citation
 {
+    [JsonPropertyName("document_id")]
+    public string? DocumentId { get; set; }
+
     [JsonPropertyName("document_name")]
     public string? DocumentName { get; set; }
 
@@ -158,7 +186,7 @@ public sealed class Citation
     [JsonPropertyName("score")]
     public double? Score { get; set; }
 
-    [JsonPropertyName("text")]
+    [JsonPropertyName("content")]
     public string? Content { get; set; }
 
     [JsonPropertyName("document_type")]
@@ -166,6 +194,9 @@ public sealed class Citation
 
     [JsonPropertyName("source")]
     public string? SourceName { get; set; }
+
+    [JsonPropertyName("stage")]
+    public string? Stage { get; set; }
 }
 
 // ── Collections ───────────────────────────────────────────────────────────────
@@ -255,6 +286,9 @@ public sealed class CreateCollectionRequest
 
     [JsonPropertyName("metadata_schema")]
     public List<MetadataFieldDef> MetadataSchema { get; set; } = [];
+
+    [JsonPropertyName("created_by")]
+    public string CreatedBy { get; set; } = "";
 }
 
 // ── Documents ─────────────────────────────────────────────────────────────────

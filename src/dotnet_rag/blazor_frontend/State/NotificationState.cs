@@ -11,6 +11,7 @@ public sealed class TaskEntry
     public int TotalDocuments { get; set; }
     public DateTime? CompletedAt { get; set; }
     public bool Dismissed { get; set; }
+    public string? ErrorMessage { get; set; }
     public bool IsTerminal => State is "FINISHED" or "FAILED";
 }
 
@@ -53,13 +54,14 @@ public sealed class NotificationState
         OnChange?.Invoke();
     }
 
-    public void UpdateTask(string taskId, string state, int completed, int total)
+    public void UpdateTask(string taskId, string state, int completed, int total, string? errorMessage = null)
     {
         var task = _tasks.FirstOrDefault(t => t.TaskId == taskId);
         if (task is null) return;
         task.State = state;
         task.DocumentsCompleted = completed;
         task.TotalDocuments = total;
+        if (errorMessage is not null) task.ErrorMessage = errorMessage;
         if (task.IsTerminal && task.CompletedAt is null)
             task.CompletedAt = DateTime.Now;
         OnChange?.Invoke();
