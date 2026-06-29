@@ -106,6 +106,9 @@ public sealed class GenerateRequest
     [JsonPropertyName("enable_query_rewriting")]
     public bool? EnableQueryRewriting { get; set; }
 
+    [JsonPropertyName("enable_query_decomposition")]
+    public bool? EnableQueryDecomposition { get; set; }
+
     [JsonPropertyName("enable_guardrails")]
     public bool? EnableGuardrails { get; set; }
 
@@ -148,6 +151,33 @@ public sealed class GenerateRequest
     [JsonPropertyName("vlm_endpoint")]
     public string? VlmEndpoint { get; set; }
 
+    [JsonPropertyName("vlm_enable_thinking")]
+    public bool? VlmEnableThinking { get; set; }
+
+    [JsonPropertyName("vlm_thinking_token_budget")]
+    public int? VlmThinkingTokenBudget { get; set; }
+
+    [JsonPropertyName("vlm_filter_thinking_tokens")]
+    public bool? VlmFilterThinkingTokens { get; set; }
+
+    [JsonPropertyName("query_rewriter_model")]
+    public string? QueryRewriterModel { get; set; }
+
+    [JsonPropertyName("query_rewriter_endpoint")]
+    public string? QueryRewriterEndpoint { get; set; }
+
+    [JsonPropertyName("filter_expression_generator_model")]
+    public string? FilterExpressionGeneratorModel { get; set; }
+
+    [JsonPropertyName("filter_expression_generator_endpoint")]
+    public string? FilterExpressionGeneratorEndpoint { get; set; }
+
+    [JsonPropertyName("reflection_model")]
+    public string? ReflectionModel { get; set; }
+
+    [JsonPropertyName("reflection_endpoint")]
+    public string? ReflectionEndpoint { get; set; }
+
     [JsonPropertyName("stop")]
     public List<string>? Stop { get; set; }
 }
@@ -189,6 +219,9 @@ public sealed class Citation
     [JsonPropertyName("content")]
     public string? Content { get; set; }
 
+    [JsonPropertyName("text")]
+    public string? Text { get; set; }
+
     [JsonPropertyName("document_type")]
     public string? DocumentType { get; set; }
 
@@ -197,6 +230,21 @@ public sealed class Citation
 
     [JsonPropertyName("stage")]
     public string? Stage { get; set; }
+
+    [JsonPropertyName("metadata")]
+    public CitationMetadata? Metadata { get; set; }
+}
+
+public sealed class CitationMetadata
+{
+    [JsonPropertyName("page_number")]
+    public int? PageNumber { get; set; }
+
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    [JsonPropertyName("source_location")]
+    public string? SourceLocation { get; set; }
 }
 
 // ── Collections ───────────────────────────────────────────────────────────────
@@ -504,6 +552,9 @@ public sealed class FeatureToggles
     [JsonPropertyName("enable_query_rewriting")]
     public bool EnableQueryRewriting { get; set; }
 
+    [JsonPropertyName("enable_query_decomposition")]
+    public bool EnableQueryDecomposition { get; set; }
+
     [JsonPropertyName("enable_guardrails")]
     public bool EnableGuardrails { get; set; }
 
@@ -512,6 +563,9 @@ public sealed class FeatureToggles
 
     [JsonPropertyName("enable_filter_generator")]
     public bool EnableFilterGenerator { get; set; }
+
+    [JsonPropertyName("enable_agentic_rag")]
+    public bool EnableAgenticRag { get; set; }
 }
 
 public sealed class ModelsConfig
@@ -527,6 +581,15 @@ public sealed class ModelsConfig
 
     [JsonPropertyName("vlm_model")]
     public string? VlmModelName { get; set; }
+
+    [JsonPropertyName("query_rewriter_model")]
+    public string? QueryRewriterModelName { get; set; }
+
+    [JsonPropertyName("filter_expression_generator_model")]
+    public string? FilterExpressionGeneratorModelName { get; set; }
+
+    [JsonPropertyName("reflection_model")]
+    public string? ReflectionModelName { get; set; }
 }
 
 public sealed class EndpointsConfig
@@ -545,6 +608,15 @@ public sealed class EndpointsConfig
 
     [JsonPropertyName("vdb_endpoint")]
     public string? VdbEndpoint { get; set; }
+
+    [JsonPropertyName("query_rewriter_endpoint")]
+    public string? QueryRewriterEndpoint { get; set; }
+
+    [JsonPropertyName("filter_expression_generator_endpoint")]
+    public string? FilterExpressionGeneratorEndpoint { get; set; }
+
+    [JsonPropertyName("reflection_endpoint")]
+    public string? ReflectionEndpoint { get; set; }
 }
 
 public sealed class ProvidersConfig
@@ -557,6 +629,9 @@ public sealed class ProvidersConfig
 
     [JsonPropertyName("vlm_provider")]
     public string? VlmProvider { get; set; }
+
+    [JsonPropertyName("vector_store_provider")]
+    public string? VectorStoreProvider { get; set; }
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────────
@@ -586,8 +661,40 @@ public sealed class NewCollectionForm
     public string BusinessDomain { get; set; } = "";
     public string Status { get; set; } = "Active";
     public bool GenerateSummary { get; set; } = true;
+    public UploadExtractionOptions ExtractionOptions { get; set; } = new();
+    public UploadSplitOptions SplitOptions { get; set; } = new();
     public List<MetadataFieldDef> Schema { get; set; } = [];
     public List<UploadFile> Files { get; set; } = [];
+}
+
+public sealed class UploadExtractionOptions
+{
+    [JsonPropertyName("extract_text")]
+    public bool ExtractText { get; set; } = true;
+
+    [JsonPropertyName("extract_tables")]
+    public bool ExtractTables { get; set; } = true;
+
+    [JsonPropertyName("extract_charts")]
+    public bool ExtractCharts { get; set; } = true;
+
+    [JsonPropertyName("extract_images")]
+    public bool ExtractImages { get; set; }
+
+    [JsonPropertyName("extract_method")]
+    public string ExtractMethod { get; set; } = "pdfium";
+
+    [JsonPropertyName("text_depth")]
+    public string TextDepth { get; set; } = "page";
+}
+
+public sealed class UploadSplitOptions
+{
+    [JsonPropertyName("chunk_size")]
+    public int ChunkSize { get; set; } = 1024;
+
+    [JsonPropertyName("chunk_overlap")]
+    public int ChunkOverlap { get; set; } = 150;
 }
 
 public sealed class UploadFile

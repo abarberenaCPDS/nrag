@@ -1,10 +1,12 @@
 using DotnetRag.Rag.Clients;
 using DotnetRag.Rag.Observability;
 using DotnetRag.Rag.Services;
+using DotnetRag.Shared.Abstractions;
 using DotnetRag.Shared.Configuration;
 using DotnetRag.Shared.Extensions;
 using DotnetRag.Shared.Models;
 using DotnetRag.Shared.Options;
+using DotnetRag.Shared.Prompts;
 using Microsoft.OpenApi.Models;
 using System.Text.Json;
 
@@ -43,9 +45,52 @@ builder.Services.AddHttpClient("reranker", client =>
 });
 builder.Services.AddSingleton<IRerankerClient, HttpRerankerClient>();
 
-builder.Services.AddSingleton<QueryRewritingService>();
-builder.Services.AddSingleton<ReflectionService>();
-builder.Services.AddSingleton<FilterExpressionService>();
+builder.Services.AddSingleton(sp => new QueryRewritingService(
+    sp.GetRequiredKeyedService<IChatCompletionService>("query_rewriter"),
+    sp.GetRequiredService<RagServerConfiguration>(),
+    sp.GetRequiredService<PromptCatalog>(),
+    sp.GetRequiredService<ILogger<QueryRewritingService>>()));
+builder.Services.AddSingleton(sp => new QueryDecompositionService(
+    sp.GetRequiredKeyedService<IChatCompletionService>("query_rewriter"),
+    sp.GetRequiredService<IVectorStore>(),
+    sp.GetRequiredService<IRerankerClient>(),
+    sp.GetRequiredService<RagServerConfiguration>(),
+    sp.GetRequiredService<PromptCatalog>(),
+    sp.GetRequiredService<ILogger<QueryDecompositionService>>()));
+builder.Services.AddSingleton(sp => new ReflectionService(
+    sp.GetRequiredKeyedService<IChatCompletionService>("reflection"),
+    sp.GetRequiredService<RagServerConfiguration>(),
+    sp.GetRequiredService<PromptCatalog>(),
+    sp.GetRequiredService<ILogger<ReflectionService>>()));
+builder.Services.AddSingleton(sp => new FilterExpressionService(
+    sp.GetRequiredKeyedService<IChatCompletionService>("filter_expression_generator"),
+    sp.GetRequiredService<IVectorStoreFilterCapabilities>(),
+    sp.GetRequiredService<RagServerConfiguration>(),
+    sp.GetRequiredService<PromptCatalog>(),
+    sp.GetRequiredService<ILogger<FilterExpressionService>>()));
+builder.Services.AddSingleton<IAgenticPlannerService>(sp => new AgenticPlannerService(
+    sp.GetRequiredKeyedService<IChatCompletionService>("main"),
+    sp.GetRequiredService<RagServerConfiguration>(),
+    sp.GetRequiredService<PromptCatalog>(),
+    sp.GetRequiredService<ILogger<AgenticPlannerService>>(),
+    sp.GetRequiredService<RagMetrics>()));
+builder.Services.AddSingleton<IAgenticRoleService>(sp => new AgenticRoleService(
+    sp.GetRequiredKeyedService<IChatCompletionService>("main"),
+    sp.GetRequiredService<RagServerConfiguration>(),
+    sp.GetRequiredService<PromptCatalog>(),
+    sp.GetRequiredService<RagMetrics>()));
+builder.Services.AddSingleton<IAgenticOrchestrationService>(sp => new AgenticOrchestrationService(
+    sp.GetRequiredService<IAgenticPlannerService>(),
+    sp.GetRequiredService<IAgenticRoleService>(),
+    sp.GetRequiredService<IVectorStore>(),
+    sp.GetRequiredService<RagServerConfiguration>(),
+    sp.GetRequiredService<RagMetrics>()));
+builder.Services.AddSingleton<IAgenticRagService>(sp => new FeatureFlaggedAgenticRagService(
+    sp.GetRequiredService<RagServerConfiguration>(),
+    sp,
+    sp.GetRequiredService<ILogger<FeatureFlaggedAgenticRagService>>()));
+builder.Services.AddSingleton<ICitationAssetResolver, FileSystemCitationAssetResolver>();
+builder.Services.AddSingleton<IVlmContextAssembler, VlmContextAssembler>();
 builder.Services.AddSingleton<RagMetrics>();
 builder.Services.AddSingleton<RagService>();
 

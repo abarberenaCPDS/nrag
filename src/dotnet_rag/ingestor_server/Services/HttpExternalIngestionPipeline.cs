@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using DotnetRag.Ingestor.Models;
 
 namespace DotnetRag.Ingestor.Services;
 
@@ -16,6 +17,7 @@ public sealed class HttpExternalIngestionPipeline(
     public async Task<IngestionPipelineResult> ExtractAsync(
         string path,
         string filename,
+        ExtractionOptions? extractionOptions = null,
         CancellationToken cancellationToken = default)
     {
         if (!File.Exists(path))
@@ -29,6 +31,14 @@ public sealed class HttpExternalIngestionPipeline(
         fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         form.Add(fileContent, "document", filename);
         form.Add(new StringContent(BackendName), "backend");
+        if (extractionOptions is not null)
+        {
+            form.Add(
+                new StringContent(JsonSerializer.Serialize(
+                    extractionOptions,
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })),
+                "extraction_options");
+        }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
@@ -55,7 +65,7 @@ public sealed class HttpExternalIngestionPipeline(
         string filename,
         CancellationToken cancellationToken = default)
     {
-        var result = await ExtractAsync(path, filename, cancellationToken);
+        var result = await ExtractAsync(path, filename, cancellationToken: cancellationToken);
         return result.Text;
     }
 

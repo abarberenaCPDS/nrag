@@ -1,4 +1,5 @@
 @inject SettingsState Settings
+@implements IDisposable
 
 <div style="display:flex;align-items:center;gap:6px;">
     <!-- Workflow icon + "Pipeline:" label -->
@@ -13,7 +14,11 @@
     </svg>
     <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;">Pipeline:</span>
 
-    <!-- Dropdown trigger -->
+    <!-- Dropdown trigger — backdrop lives OUTSIDE the z:202 wrapper so it can't occlude the button -->
+    @if (_open)
+    {
+        <div style="position:fixed;inset:0;z-index:200;" @onclick="Close"></div>
+    }
     <div style="position:relative;z-index:202;">
         <button style="background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:3px;padding:0;color:var(--text);font-size:12px;font-weight:600;white-space:nowrap;"
                 @onclick="Toggle" aria-haspopup="listbox" aria-expanded="@_open"
@@ -27,12 +32,12 @@
 
         @if (_open)
         {
-            <div style="position:fixed;inset:0;z-index:200;" @onclick="Close"></div>
             <div style="position:absolute;bottom:calc(100% + 8px);left:0;min-width:230px;
                         background:var(--surface);border:1px solid var(--border);border-radius:8px;
-                        z-index:201;overflow:hidden;box-shadow:0 -4px 20px rgba(0,0,0,0.35);"
-                 role="listbox" @onclick:stopPropagation="true">
-                @foreach (var (agentic, label, desc) in _modes)
+                        z-index:201;overflow:hidden;box-shadow:0 -4px 20px rgba(0,0,0,0.35);outline:none;"
+                 role="listbox" tabindex="-1" @ref="_menuRef"
+                 @onclick:stopPropagation="true" @onkeydown="HandleMenuKeyDown">
+                @foreach (var (agentic, label, desc) in Modes)
                 {
                     var isActive = _agenticMode == agentic;
                     <button style="width:100%;text-align:left;padding:10px 14px;border:none;cursor:pointer;
@@ -52,23 +57,67 @@
 @code {
     private bool _open;
     private bool _agenticMode;
+    private bool _needsFocus;
+    private ElementReference _menuRef;
 
-    private static readonly (bool Agentic, string Label, string Desc)[] _modes =
-    [
-        (false, "Standard", "Standard RAG pipeline"),
-        (true,  "Agentic",  "LangGraph plan-and-execute"),
-    ];
+    private IEnumerable<(bool Agentic, string Label, string Desc)> Modes
+    {
+        get
+        {
+            yield return (false, "Standard", "Standard RAG pipeline");
+            if (Settings.AgenticAvailable)
+            {
+                yield return (true, "Agentic", "Agentic RAG pipeline");
+            }
+        }
+    }
 
-    protected override void OnInitialized() => _agenticMode = Settings.AgenticMode;
+    protected override void OnInitialized()
+    {
+        Settings.OnChange += OnSettingsChanged;
+        SyncFromSettings();
+    }
 
-    private void Toggle() => _open = !_open;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_needsFocus) { _needsFocus = false; try { await _menuRef.FocusAsync(); } catch { } }
+    }
+
+    private void Toggle() { _open = !_open; if (_open) _needsFocus = true; }
     private void Close() => _open = false;
+    private void HandleMenuKeyDown(KeyboardEventArgs e) { if (e.Key == "Escape") Close(); }
 
     private void Select(bool agentic)
     {
+        if (agentic && !Settings.AgenticAvailable)
+        {
+            return;
+        }
+
         _agenticMode = agentic;
         Settings.AgenticMode = agentic;
         Settings.NotifyChange();
         _open = false;
+    }
+
+    private void OnSettingsChanged()
+    {
+        SyncFromSettings();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void SyncFromSettings()
+    {
+        if (!Settings.AgenticAvailable && Settings.AgenticMode)
+        {
+            Settings.AgenticMode = false;
+        }
+
+        _agenticMode = Settings.AgenticAvailable && Settings.AgenticMode;
+    }
+
+    public void Dispose()
+    {
+        Settings.OnChange -= OnSettingsChanged;
     }
 }

@@ -81,6 +81,15 @@ public sealed class NotificationState
         OnChange?.Invoke();
     }
 
+    public bool HasPendingTask(string collectionName)
+        => _tasks.Any(t => t.CollectionName == collectionName && !t.IsTerminal);
+
+    public (int Completed, int Total) GetPendingTaskProgress(string collectionName)
+    {
+        var t = _tasks.FirstOrDefault(t => t.CollectionName == collectionName && !t.IsTerminal);
+        return t is null ? (0, 0) : (t.DocumentsCompleted, t.TotalDocuments);
+    }
+
     public void SetHealth(HealthResponse health)
     {
         // Status int values: 0=Healthy, 1=Unhealthy, 2=Skipped, 3=Timeout, 4=Error, 5=Unknown

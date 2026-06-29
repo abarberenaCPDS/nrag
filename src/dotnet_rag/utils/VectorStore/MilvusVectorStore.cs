@@ -16,8 +16,11 @@ namespace DotnetRag.Shared.VectorStore;
 //   text      VarChar  document content
 //   vector    FloatVector
 //   metadata  JSON     all per-document metadata (filename, etc.)
-public sealed class MilvusVectorStore : IVectorStore, IVectorStoreManagement, IVectorDocumentLookup
+public sealed class MilvusVectorStore : IVectorStore, IVectorStoreManagement, IVectorDocumentLookup, IVectorStoreFilterCapabilities
 {
+    private const string MetadataSchemaCollection = "metadata_schema";
+    private const string DocumentInfoCollection = "document_info";
+
     private static readonly JsonSerializerOptions JsonOpts =
         new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -47,6 +50,9 @@ public sealed class MilvusVectorStore : IVectorStore, IVectorStoreManagement, IV
     }
 
     // ── IVectorStore ──────────────────────────────────────────────────────────
+
+    public bool SupportsGeneratedFilters => true;
+    public GeneratedFilterPromptKind GeneratedFilterPromptKind => GeneratedFilterPromptKind.Milvus;
 
     public async Task UpsertAsync(
         string collectionName,
@@ -162,29 +168,35 @@ public sealed class MilvusVectorStore : IVectorStore, IVectorStoreManagement, IV
         if (data is null) return [];
 
         var results = new List<VectorSearchResult>(data.Count);
-        foreach (var item in data)
+        foreach (var item in EnumerateSearchRows(data))
         {
-            var id = item?["id"]?.GetValue<string>()
-                ?? item?["source"]?["source_id"]?.GetValue<string>()
+            var fields = item["entity"] as JsonObject ?? item;
+            var id = NodeAsString(item["id"])
+                ?? NodeAsString(fields["id"])
+                ?? NodeAsString((fields["source"] as JsonObject)?["source_id"])
                 ?? string.Empty;
-            var text = item?["text"]?.GetValue<string>() ?? string.Empty;
-            var distance = item?["distance"]?.GetValue<double>() ?? 0.0;
+            var text = NodeAsString(fields["text"]) ?? string.Empty;
+            var distance = NodeAsDouble(item["distance"])
+                ?? NodeAsDouble(item["score"])
+                ?? NodeAsDouble(fields["distance"])
+                ?? NodeAsDouble(fields["score"])
+                ?? 0.0;
             // Milvus COSINE returns similarity directly (1 = identical)
             var score = distance;
 
             var meta = new Dictionary<string, string>();
-            var metaNode = item?["metadata"];
+            var metaNode = fields["metadata"];
             if (metaNode is JsonObject metaObj)
             {
                 foreach (var kv in metaObj)
-                    meta[kv.Key] = kv.Value?.GetValue<string>() ?? string.Empty;
+                    meta[kv.Key] = NodeAsString(kv.Value) ?? string.Empty;
             }
-            if (item?["source"] is JsonObject sourceObj)
+            if (fields["source"] is JsonObject sourceObj)
             {
                 foreach (var kv in sourceObj)
                     meta[$"source.{kv.Key}"] = kv.Value?.ToJsonString() ?? string.Empty;
             }
-            if (item?["content_metadata"] is JsonObject contentMetaObj)
+            if (fields["content_metadata"] is JsonObject contentMetaObj)
             {
                 foreach (var kv in contentMetaObj)
                     meta[$"content_metadata.{kv.Key}"] = kv.Value?.ToJsonString() ?? string.Empty;
@@ -236,6 +248,11 @@ public sealed class MilvusVectorStore : IVectorStore, IVectorStoreManagement, IV
             return string.Empty;
         }
     }
+
+    public Task<string> GetFilterSchemaDescriptionAsync(
+        string collectionName,
+        CancellationToken cancellationToken = default) =>
+        GetSchemaDescriptionAsync(collectionName, cancellationToken);
 
     // ── Collection helpers ────────────────────────────────────────────────────
 
@@ -289,6 +306,28 @@ public sealed class MilvusVectorStore : IVectorStore, IVectorStoreManagement, IV
         {
             return false;
         }
+    }
+
+    public async Task<IReadOnlyList<VectorStoreCollectionDetails>> ListCollectionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var collectionNames = await ListMilvusCollectionNamesAsync(cancellationToken);
+        var metadataSchemas = await LoadMetadataSchemaMapAsync(cancellationToken);
+        var collectionInfo = await LoadCollectionInfoMapAsync(cancellationToken);
+        var details = new List<VectorStoreCollectionDetails>();
+
+        foreach (var collectionName in collectionNames
+            .Where(name => !IsSystemCollection(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            details.Add(new VectorStoreCollectionDetails(
+                collectionName,
+                await GetCollectionRowCountAsync(collectionName, cancellationToken),
+                metadataSchemas.GetValueOrDefault(collectionName) ?? [],
+                collectionInfo.GetValueOrDefault(collectionName) ?? new Dictionary<string, object?>()));
+        }
+
+        return details;
     }
 
     public async Task DeleteDocumentsAsync(
@@ -469,6 +508,223 @@ public sealed class MilvusVectorStore : IVectorStore, IVectorStoreManagement, IV
             "Created Milvus collection '{Collection}' (dim={Dim})", collectionName, _embeddingDim);
     }
 
+    private async Task<IReadOnlyList<string>> ListMilvusCollectionNamesAsync(
+        CancellationToken cancellationToken)
+    {
+        var response = await PostAsync("collections/list", new { }, cancellationToken);
+        if (!await IsSuccessAsync(response, cancellationToken))
+        {
+            return [];
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var root = JsonNode.Parse(body);
+        var names = root?["data"]?.AsArray()
+            ?? root?["data"]?["collectionNames"]?.AsArray()
+            ?? root?["data"]?["collection_names"]?.AsArray();
+        if (names is null)
+        {
+            return [];
+        }
+
+        return names
+            .Select(item => item?.GetValue<string>())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Cast<string>()
+            .ToList();
+    }
+
+    private async Task<long> GetCollectionRowCountAsync(
+        string collectionName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await PostAsync("collections/get_stats", new { collectionName }, cancellationToken);
+            if (!await IsSuccessAsync(response, cancellationToken))
+            {
+                return 0;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            var root = JsonNode.Parse(body);
+            return GetJsonLong(root?["data"]?["row_count"])
+                ?? GetJsonLong(root?["data"]?["rowCount"])
+                ?? GetJsonLong(root?["data"]?["num_entities"])
+                ?? 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to retrieve Milvus stats for '{Collection}'", collectionName);
+            return 0;
+        }
+    }
+
+    private async Task<Dictionary<string, IReadOnlyList<IReadOnlyDictionary<string, object?>>>> LoadMetadataSchemaMapAsync(
+        CancellationToken cancellationToken)
+    {
+        var response = await PostAsync(
+            "entities/query",
+            new
+            {
+                collectionName = MetadataSchemaCollection,
+                outputFields = new[] { "collection_name", "metadata_schema" },
+                limit = 16_384
+            },
+            cancellationToken);
+        if (!await IsSuccessAsync(response, cancellationToken))
+        {
+            return [];
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var data = JsonNode.Parse(body)?["data"]?.AsArray();
+        if (data is null)
+        {
+            return [];
+        }
+
+        var map = new Dictionary<string, IReadOnlyList<IReadOnlyDictionary<string, object?>>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in data)
+        {
+            var collectionName = item?["collection_name"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(collectionName))
+            {
+                continue;
+            }
+
+            map[collectionName] = ToObjectList(item?["metadata_schema"]);
+        }
+
+        return map;
+    }
+
+    private async Task<Dictionary<string, IReadOnlyDictionary<string, object?>>> LoadCollectionInfoMapAsync(
+        CancellationToken cancellationToken)
+    {
+        var response = await PostAsync(
+            "entities/query",
+            new
+            {
+                collectionName = DocumentInfoCollection,
+                filter = "info_type == 'catalog' or info_type == 'collection'",
+                outputFields = new[] { "collection_name", "info_type", "info_value" },
+                limit = 16_384
+            },
+            cancellationToken);
+        if (!await IsSuccessAsync(response, cancellationToken))
+        {
+            return [];
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var data = JsonNode.Parse(body)?["data"]?.AsArray();
+        if (data is null)
+        {
+            return [];
+        }
+
+        var map = new Dictionary<string, Dictionary<string, object?>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in data)
+        {
+            var collectionName = item?["collection_name"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(collectionName))
+            {
+                continue;
+            }
+
+            if (!map.TryGetValue(collectionName, out var collectionInfo))
+            {
+                collectionInfo = new Dictionary<string, object?>(StringComparer.Ordinal);
+                map[collectionName] = collectionInfo;
+            }
+
+            foreach (var pair in ToObjectDictionary(item?["info_value"]))
+            {
+                collectionInfo[pair.Key] = pair.Value;
+            }
+        }
+
+        return map.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyDictionary<string, object?>)pair.Value,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSystemCollection(string collectionName) =>
+        collectionName.Equals(MetadataSchemaCollection, StringComparison.OrdinalIgnoreCase)
+        || collectionName.Equals(DocumentInfoCollection, StringComparison.OrdinalIgnoreCase);
+
+    private static long? GetJsonLong(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        if (node.GetValueKind() == JsonValueKind.Number && node.GetValue<long>() is var number)
+        {
+            return number;
+        }
+
+        if (node.GetValueKind() == JsonValueKind.String
+            && long.TryParse(node.GetValue<string>(), out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<IReadOnlyDictionary<string, object?>> ToObjectList(JsonNode? node)
+    {
+        if (node is not JsonArray array)
+        {
+            return [];
+        }
+
+        return array
+            .Select(ToObjectDictionary)
+            .Where(item => item.Count > 0)
+            .ToList();
+    }
+
+    private static IReadOnlyDictionary<string, object?> ToObjectDictionary(JsonNode? node)
+    {
+        if (node is not JsonObject obj)
+        {
+            return new Dictionary<string, object?>();
+        }
+
+        var dict = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (key, value) in obj)
+        {
+            dict[key] = ToPlainObject(value);
+        }
+
+        return dict;
+    }
+
+    private static object? ToPlainObject(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        return node.GetValueKind() switch
+        {
+            JsonValueKind.Object => ToObjectDictionary(node),
+            JsonValueKind.Array => node.AsArray().Select(ToPlainObject).ToList(),
+            JsonValueKind.String => node.GetValue<string>(),
+            JsonValueKind.Number when node.AsValue().TryGetValue<long>(out var longValue) => longValue,
+            JsonValueKind.Number when node.AsValue().TryGetValue<double>(out var doubleValue) => doubleValue,
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null
+        };
+    }
+
     private static string? GetMetadataString(
         IReadOnlyDictionary<string, object?> metadata,
         string key)
@@ -588,6 +844,65 @@ public sealed class MilvusVectorStore : IVectorStore, IVectorStoreManagement, IV
         new[] { "id", "text", "metadata", "source", "content_metadata" }
             .Where(schema.Contains)
             .ToArray();
+
+    private static IEnumerable<JsonObject> EnumerateSearchRows(JsonArray data)
+    {
+        foreach (var item in data)
+        {
+            if (item is JsonObject row)
+            {
+                yield return row;
+                continue;
+            }
+
+            if (item is not JsonArray hits)
+            {
+                continue;
+            }
+
+            foreach (var hit in hits)
+            {
+                if (hit is JsonObject hitObj)
+                {
+                    yield return hitObj;
+                }
+            }
+        }
+    }
+
+    private static string? NodeAsString(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return node.GetValue<string>();
+        }
+        catch
+        {
+            return node.ToJsonString().Trim('"');
+        }
+    }
+
+    private static double? NodeAsDouble(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return node.GetValue<double>();
+        }
+        catch
+        {
+            return double.TryParse(NodeAsString(node), out var value) ? value : null;
+        }
+    }
 
     private async Task<HttpResponseMessage> PostAsync(
         string path,

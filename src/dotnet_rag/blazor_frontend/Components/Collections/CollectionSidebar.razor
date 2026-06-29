@@ -62,18 +62,33 @@
                                @onchange="() => ColState.ToggleSelection(colName)"
                                aria-label="Select @col.CollectionName" />
                         <div class="name">@col.CollectionName</div>
-                        <div class="count">@col.NumEntities entities</div>
-                        <button class="collection-more-btn"
-                                title="Details"
-                                @onclick:stopPropagation="true"
-                                @onclick="() => ColState.OpenDrawer(col)"
-                                aria-label="Open @col.CollectionName details">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
-                                <circle cx="12" cy="5" r="2"/>
-                                <circle cx="12" cy="12" r="2"/>
-                                <circle cx="12" cy="19" r="2"/>
-                            </svg>
-                        </button>
+                        <div class="count">@col.NumEntities @(col.NumEntities == 1 ? "entity" : "entities")</div>
+                        @if (NotifState.HasPendingTask(colName))
+                        {
+                            var (done, total) = NotifState.GetPendingTaskProgress(colName);
+                            <span style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px;flex-shrink:0;"
+                                  title="Ingesting…">
+                                @done/@(total > 0 ? total.ToString() : "?")
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                     style="animation:spin 1s linear infinite;flex-shrink:0;" aria-label="Ingesting">
+                                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                                </svg>
+                            </span>
+                        }
+                        else
+                        {
+                            <button class="collection-more-btn"
+                                    title="Details"
+                                    @onclick:stopPropagation="true"
+                                    @onclick="() => ColState.OpenDrawer(col)"
+                                    aria-label="Open @col.CollectionName details">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+                                    <circle cx="12" cy="5" r="2"/>
+                                    <circle cx="12" cy="12" r="2"/>
+                                    <circle cx="12" cy="19" r="2"/>
+                                </svg>
+                            </button>
+                        }
                     </div>
                 }
             </div>
@@ -102,10 +117,16 @@
 }
 
 @code {
+    private HashSet<string> _pendingCollections = new(StringComparer.Ordinal);
+
     protected override async Task OnInitializedAsync()
     {
         ColState.OnChange += HandleChange;
+        NotifState.OnChange += HandleNotifChange;
         await LoadCollections();
+        _pendingCollections = new HashSet<string>(
+            NotifState.Tasks.Where(t => !t.IsTerminal).Select(t => t.CollectionName),
+            StringComparer.Ordinal);
     }
 
     private async Task LoadCollections()
@@ -124,5 +145,29 @@
 
     private async void HandleChange() => await InvokeAsync(StateHasChanged);
 
-    public void Dispose() => ColState.OnChange -= HandleChange;
+    private async void HandleNotifChange()
+    {
+        var nowPending = new HashSet<string>(
+            NotifState.Tasks.Where(t => !t.IsTerminal).Select(t => t.CollectionName),
+            StringComparer.Ordinal);
+
+        var justCompleted = _pendingCollections.Where(c => !nowPending.Contains(c)).ToList();
+        _pendingCollections = nowPending;
+
+        if (justCompleted.Count > 0)
+        {
+            // A task finished — re-fetch collections to get updated entity counts
+            await InvokeAsync(LoadCollections);
+        }
+        else
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public void Dispose()
+    {
+        ColState.OnChange -= HandleChange;
+        NotifState.OnChange -= HandleNotifChange;
+    }
 }

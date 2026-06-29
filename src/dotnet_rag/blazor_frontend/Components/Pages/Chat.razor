@@ -199,9 +199,10 @@
             EnableReranker = Settings.EnableReranker,
             EnableCitations = Settings.EnableCitations,
             EnableQueryRewriting = Settings.EnableQueryRewriting,
+            EnableQueryDecomposition = Settings.EnableQueryDecomposition,
             EnableGuardrails = Settings.EnableGuardrails,
             EnableVlmInference = images.Count > 0 && Settings.EnableVlmInference,
-            EnableFilterGenerator = Settings.EnableFilterGenerator && ColState.SelectedCollectionNames.Count == 1,
+            EnableFilterGenerator = Settings.EnableFilterGenerator,
             Agentic = Settings.AgenticMode,
             ConfidenceThreshold = Settings.ConfidenceThreshold,
             EnableStreaming = true,
@@ -214,6 +215,21 @@
             EmbeddingEndpoint = string.IsNullOrEmpty(Settings.EmbeddingServerUrl) ? null : Settings.EmbeddingServerUrl,
             RerankerEndpoint = string.IsNullOrEmpty(Settings.RankingServerUrl) ? null : Settings.RankingServerUrl,
             VlmEndpoint = string.IsNullOrEmpty(Settings.VlmServerUrl) ? null : Settings.VlmServerUrl,
+            VlmEnableThinking = images.Count > 0 && Settings.EnableVlmInference
+                ? Settings.VlmEnableThinking
+                : null,
+            VlmThinkingTokenBudget = images.Count > 0 && Settings.EnableVlmInference && Settings.VlmEnableThinking
+                ? Settings.VlmThinkingTokenBudget
+                : null,
+            VlmFilterThinkingTokens = images.Count > 0 && Settings.EnableVlmInference
+                ? Settings.VlmFilterThinkingTokens
+                : null,
+            QueryRewriterModel = string.IsNullOrEmpty(Settings.QueryRewriterModelName) ? null : Settings.QueryRewriterModelName,
+            QueryRewriterEndpoint = string.IsNullOrEmpty(Settings.QueryRewriterServerUrl) ? null : Settings.QueryRewriterServerUrl,
+            FilterExpressionGeneratorModel = string.IsNullOrEmpty(Settings.FilterExpressionGeneratorModelName) ? null : Settings.FilterExpressionGeneratorModelName,
+            FilterExpressionGeneratorEndpoint = string.IsNullOrEmpty(Settings.FilterExpressionGeneratorServerUrl) ? null : Settings.FilterExpressionGeneratorServerUrl,
+            ReflectionModel = string.IsNullOrEmpty(Settings.ReflectionModelName) ? null : Settings.ReflectionModelName,
+            ReflectionEndpoint = string.IsNullOrEmpty(Settings.ReflectionServerUrl) ? null : Settings.ReflectionServerUrl,
             Stop = Settings.StopTokenList.Count > 0 ? Settings.StopTokenList : null
         };
     }

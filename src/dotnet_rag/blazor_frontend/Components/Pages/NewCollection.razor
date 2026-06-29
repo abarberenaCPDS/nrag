@@ -4,186 +4,248 @@
 @inject NavigationManager Nav
 
 <div style="height:100%;width:100%;overflow-y:auto;">
-<div style="max-width:800px;margin:0 auto;padding:32px;">
-    <h1 style="font-size:20px;font-weight:600;margin-bottom:8px;">Create New Collection</h1>
-    <p class="text-muted" style="font-size:13px;margin-bottom:28px;">Upload source files and define metadata schema for this collection.</p>
+<div style="padding:32px;">
 
-    <!-- Stepper -->
-    <div class="stepper">
-        @for (int i = 0; i < _steps.Length; i++)
-        {
-            var idx = i;
-            var stepClass = idx < _step ? "done" : idx == _step ? "active" : "";
-            var stepNum = idx < _step ? "✓" : (idx + 1).ToString();
-            <div class="step @stepClass">
-                <div class="step-num">@stepNum</div>
-                <span class="step-label">@_steps[idx]</span>
-            </div>
-        }
-    </div>
-
-    <!-- Step 0: Upload files -->
-    @if (_step == 0)
+    @if (_processing)
     {
-        <FileUploadZone OnFilesAdded="HandleFilesAdded" />
-        <div class="file-list">
-            @foreach (var (f, idx2) in _form.Files.Select((f, i) => (f, i)))
-            {
-                var capturedIdx = idx2;
-                <div class="file-item">
-                    <span class="file-name">@f.Name</span>
-                    <span class="file-size">@FormatSize(f.Size)</span>
-                    <button class="file-remove" @onclick="() => _form.Files.RemoveAt(capturedIdx)" aria-label="Remove file">✕</button>
-                </div>
-            }
-        </div>
-        <div style="margin-top:20px;display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-size:12px;color:var(--text-muted);">Files are optional — you can add them later.</span>
-            <button class="send-btn" style="width:auto;padding:8px 20px;border-radius:6px;font-size:13px;font-weight:500;"
-                    @onclick="() => _step++">
-                Next: Metadata schema
-            </button>
-        </div>
-    }
-
-    <!-- Step 1: Metadata schema -->
-    @if (_step == 1)
-    {
-        <MetadataSchemaEditor Schema="_form.Schema" SchemaChanged="s => _form.Schema = s" />
-        <div style="margin-top:20px;display:flex;justify-content:space-between;">
-            <button style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text-muted);cursor:pointer;font-size:13px;"
-                    @onclick="() => _step--">Back</button>
-            <button class="send-btn" style="width:auto;padding:8px 20px;border-radius:6px;font-size:13px;font-weight:500;"
-                    @onclick="() => _step++">
-                Next: Collection info
-            </button>
-        </div>
-    }
-
-    <!-- Step 2: Catalog info -->
-    @if (_step == 2)
-    {
-        <div style="display:flex;flex-direction:column;gap:14px;">
-            <!-- Collection name with validation -->
-            <div>
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Collection name *</div>
-                <input type="text" value="@_form.CollectionName"
-                       @oninput="HandleCollectionNameInput"
-                       placeholder="my_collection"
-                       style="width:100%;background:var(--ground);border:1px solid @(_nameError.Length > 0 ? "var(--error)" : "var(--border)");border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box;" />
-                @if (_nameError.Length > 0)
-                {
-                    <div style="color:var(--error);font-size:12px;margin-top:4px;">@_nameError</div>
-                }
-            </div>
-
-            <LabeledInput Label="Description" Value="@_form.Description" ValueChanged="v => _form.Description = v" />
-
-            <!-- Tags chip input -->
-            <div>
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Tags</div>
-                @if (_form.Tags.Count > 0)
-                {
-                    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">
-                        @foreach (var tag in _form.Tags.ToList())
-                        {
-                            var t = tag;
-                            <span style="display:inline-flex;align-items:center;gap:4px;background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;"
-                                  @onclick="() => _form.Tags.Remove(t)">
-                                @t <span style="color:var(--text-muted);" aria-hidden="true">×</span>
-                            </span>
-                        }
-                    </div>
-                }
-                <div style="display:flex;gap:6px;">
-                    <input type="text" @bind="_newTag" @bind:event="oninput"
-                           @onkeydown="HandleTagKeyDown"
-                           placeholder="Add tag…"
-                           style="flex:1;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
-                    <button @onclick="AddTag"
-                            style="background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;color:var(--text);font-size:13px;">
-                        Add
-                    </button>
-                </div>
-            </div>
-
-            <LabeledInput Label="Owner" Value="@_form.Owner" ValueChanged="v => _form.Owner = v" />
-
-            <!-- Business Domain select -->
-            <div>
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Business Domain</div>
-                <select @bind="_form.BusinessDomain"
-                        style="width:100%;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;">
-                    <option value="">Select domain…</option>
-                    <option value="Engineering">Engineering</option>
-                    <option value="Finance">Finance</option>
-                    <option value="Legal">Legal</option>
-                    <option value="Marketing">Marketing</option>
-                    <option value="Operations">Operations</option>
-                    <option value="Product">Product</option>
-                    <option value="Sales">Sales</option>
-                    <option value="Support">Support</option>
-                    <option value="Other">Other</option>
-                </select>
-            </div>
-
-            <!-- Status select -->
-            <div>
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Status</div>
-                <select @bind="_form.Status"
-                        style="width:100%;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;">
-                    <option value="Active">Active</option>
-                    <option value="Archived">Archived</option>
-                    <option value="Deprecated">Deprecated</option>
-                </select>
-            </div>
-
-            <div style="display:flex;align-items:center;gap:8px;font-size:13px;">
-                <input type="checkbox" id="gen-summary" @bind="_form.GenerateSummary" style="accent-color:var(--accent);" />
-                <label for="gen-summary">Generate document summaries</label>
-            </div>
-        </div>
-        <div style="margin-top:20px;display:flex;justify-content:space-between;align-items:center;">
-            <button style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text-muted);cursor:pointer;font-size:13px;"
-                    @onclick="() => _step--">Back</button>
-            <div style="display:flex;gap:8px;">
-                <a href="/"
-                   style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text-muted);cursor:pointer;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;">
-                    Cancel
-                </a>
-                <button class="send-btn" style="width:auto;padding:8px 20px;border-radius:6px;font-size:13px;font-weight:500;"
-                        disabled="@(string.IsNullOrWhiteSpace(_form.CollectionName) || _nameError.Length > 0)"
-                        @onclick="Submit">
-                    Create Collection
-                </button>
-            </div>
-        </div>
-    }
-
-    <!-- Step 3: creating -->
-    @if (_step == 3)
-    {
-        <div style="text-align:center;padding:40px 0;">
+        <div style="display:flex;align-items:center;justify-content:center;padding:60px 0;text-align:center;">
             @if (_uploadError is not null)
             {
-                <p style="color:var(--error);font-size:14px;">@_uploadError</p>
-                <button style="margin-top:16px;background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer;"
-                        @onclick="ResetForm">Start over</button>
+                <div>
+                    <p style="color:var(--error);font-size:14px;margin-bottom:16px;">@_uploadError</p>
+                    <button style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer;"
+                            @onclick="() => _processing = false">Start over</button>
+                </div>
             }
             else
             {
-                <div class="typing-indicator" style="justify-content:center;"><span></span><span></span><span></span></div>
-                <p class="text-muted" style="margin-top:12px;font-size:13px;">Creating collection…</p>
+                <div>
+                    <div class="typing-indicator" style="justify-content:center;"><span></span><span></span><span></span></div>
+                    <p class="text-muted" style="margin-top:12px;font-size:13px;">Creating collection…</p>
+                </div>
             }
         </div>
     }
+    else
+    {
+        <h1 style="font-size:20px;font-weight:600;margin-bottom:4px;">Create New Collection</h1>
+        <p class="text-muted" style="font-size:13px;margin-bottom:24px;">Upload source files and define metadata schema for this collection.</p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+
+            <!-- LEFT COLUMN: name, catalog, config, schema -->
+            <div style="display:flex;flex-direction:column;gap:16px;">
+
+                <!-- Collection Name -->
+                <div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Collection Name *</div>
+                    <input type="text" value="@_form.CollectionName"
+                           @oninput="HandleCollectionNameInput"
+                           placeholder="my_collection"
+                           style="width:100%;background:var(--ground);border:1px solid @(_nameError.Length > 0 ? "var(--error)" : "var(--border)");border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box;" />
+                    @if (_nameError.Length > 0)
+                    {
+                        <div style="color:var(--error);font-size:12px;margin-top:4px;">@_nameError</div>
+                    }
+                </div>
+
+                <!-- Data Catalog (collapsible) -->
+                <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+                    <button type="button"
+                            style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--ground);border:none;cursor:pointer;color:var(--text);font-size:13px;font-weight:500;"
+                            @onclick="() => _catalogExpanded = !_catalogExpanded">
+                        <span style="display:flex;align-items:center;gap:8px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                            </svg>
+                            Data Catalog
+                        </span>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                             style="transition:transform 0.2s;transform:rotate(@(_catalogExpanded ? "180deg" : "0deg"))" aria-hidden="true">
+                            <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                    </button>
+                    @if (_catalogExpanded)
+                    {
+                        <div style="padding:14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:12px;">
+                            <div>
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Description</div>
+                                <input type="text" value="@_form.Description"
+                                       @oninput="e => _form.Description = e.Value?.ToString() ?? string.Empty"
+                                       placeholder="e.g. Q4 2024 Financial Reports"
+                                       style="width:100%;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box;" />
+                            </div>
+                            <div>
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Tags</div>
+                                @if (_form.Tags.Count > 0)
+                                {
+                                    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">
+                                        @foreach (var tag in _form.Tags.ToList())
+                                        {
+                                            var t = tag;
+                                            <span style="display:inline-flex;align-items:center;gap:4px;background:var(--ground);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;"
+                                                  @onclick="() => _form.Tags.Remove(t)">
+                                                @t <span style="color:var(--text-muted);" aria-hidden="true">×</span>
+                                            </span>
+                                        }
+                                    </div>
+                                }
+                                <div style="display:flex;gap:6px;">
+                                    <input type="text" @bind="_newTag" @bind:event="oninput"
+                                           @onkeydown="HandleTagKeyDown"
+                                           placeholder="Add tag…"
+                                           style="flex:1;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;" />
+                                    <button type="button" @onclick="AddTag"
+                                            style="background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;color:var(--text);font-size:13px;">
+                                        Add
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Owner</div>
+                                <input type="text" value="@_form.Owner"
+                                       @oninput="e => _form.Owner = e.Value?.ToString() ?? string.Empty"
+                                       placeholder="e.g. Finance Team"
+                                       style="width:100%;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box;" />
+                            </div>
+                            <div>
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Business Domain</div>
+                                <select @bind="_form.BusinessDomain"
+                                        style="width:100%;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;">
+                                    <option value="">Select domain…</option>
+                                    <option value="Engineering">Engineering</option>
+                                    <option value="Finance">Finance</option>
+                                    <option value="Legal">Legal</option>
+                                    <option value="Marketing">Marketing</option>
+                                    <option value="Operations">Operations</option>
+                                    <option value="Product">Product</option>
+                                    <option value="Sales">Sales</option>
+                                    <option value="Support">Support</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Status</div>
+                                <select @bind="_form.Status"
+                                        style="width:100%;background:var(--ground);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;">
+                                    <option value="Active">Active</option>
+                                    <option value="Archived">Archived</option>
+                                    <option value="Deprecated">Deprecated</option>
+                                </select>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <!-- Collection Configuration -->
+                <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:var(--ground);">
+                    <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Collection Configuration</div>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                        <input type="checkbox" @bind="_form.GenerateSummary" style="accent-color:var(--accent);" />
+                        Generate document summaries
+                    </label>
+                </div>
+
+                <!-- Metadata Schema Editor -->
+                <MetadataSchemaEditor Schema="_form.Schema" SchemaChanged="s => _form.Schema = s" />
+
+            </div>
+
+            <!-- RIGHT COLUMN: file upload + extraction options -->
+            <div style="display:flex;flex-direction:column;gap:16px;">
+
+                <!-- File upload zone -->
+                <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--ground);">
+                    <div style="font-size:13px;font-weight:500;margin-bottom:12px;">Upload Files</div>
+                    <FileUploadZone OnFilesAdded="HandleFilesAdded" />
+                    @if (_form.Files.Count > 0)
+                    {
+                        <div class="file-list" style="margin-top:12px;">
+                            @foreach (var (f, idx2) in _form.Files.Select((f, i) => (f, i)))
+                            {
+                                var capturedIdx = idx2;
+                                <div class="file-item">
+                                    <span class="file-name">@f.Name</span>
+                                    <span class="file-size">@FormatSize(f.Size)</span>
+                                    <button class="file-remove" @onclick="() => _form.Files.RemoveAt(capturedIdx)" aria-label="Remove file">✕</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                    <p style="margin-top:10px;font-size:12px;color:var(--text-muted);">Files are optional — you can add them later.</p>
+                </div>
+
+                <!-- Extraction options -->
+                <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--ground);">
+                    <div style="font-size:13px;font-weight:500;margin-bottom:10px;">Extraction Options</div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:8px;margin-bottom:12px;">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);">
+                            <input type="checkbox" @bind="_form.ExtractionOptions.ExtractText" style="accent-color:var(--accent);" /> Text
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);">
+                            <input type="checkbox" @bind="_form.ExtractionOptions.ExtractTables" style="accent-color:var(--accent);" /> Tables
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);">
+                            <input type="checkbox" @bind="_form.ExtractionOptions.ExtractCharts" style="accent-color:var(--accent);" /> Charts
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);">
+                            <input type="checkbox" @bind="_form.ExtractionOptions.ExtractImages" style="accent-color:var(--accent);" /> Images
+                        </label>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                        <div>
+                            <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Extract method</div>
+                            <select @bind="_form.ExtractionOptions.ExtractMethod"
+                                    style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;outline:none;">
+                                <option value="pdfium">pdfium</option>
+                            </select>
+                        </div>
+                        <div>
+                            <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Text depth</div>
+                            <select @bind="_form.ExtractionOptions.TextDepth"
+                                    style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;outline:none;">
+                                <option value="page">page</option>
+                                <option value="document">document</option>
+                            </select>
+                        </div>
+                        <div>
+                            <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Chunk size</div>
+                            <input type="number" min="1" @bind="_form.SplitOptions.ChunkSize"
+                                   style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;" />
+                        </div>
+                        <div>
+                            <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Overlap</div>
+                            <input type="number" min="0" @bind="_form.SplitOptions.ChunkOverlap"
+                                   style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;" />
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Bottom row buttons -->
+        <div style="margin-top:24px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);padding-top:20px;">
+            <a href="/"
+               style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:8px 20px;color:var(--text-muted);cursor:pointer;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;">
+                Cancel
+            </a>
+            <button class="send-btn" style="width:auto;padding:8px 24px;border-radius:6px;font-size:13px;font-weight:500;"
+                    disabled="@(string.IsNullOrWhiteSpace(_form.CollectionName) || _nameError.Length > 0)"
+                    @onclick="Submit">
+                Create Collection
+            </button>
+        </div>
+    }
+
 </div>
 </div>
 
 @code {
-    private readonly string[] _steps = ["Upload files", "Metadata schema", "Collection info", "Processing"];
-    private int _step;
     private readonly NewCollectionForm _form = new();
+    private bool _processing;
+    private bool _catalogExpanded;
     private string? _uploadError;
     private string _nameError = "";
     private string _newTag = "";
@@ -215,18 +277,12 @@
 
     private void HandleFilesAdded(List<UploadFile> files) => _form.Files.AddRange(files);
 
-    private void ResetForm()
-    {
-        _step = 0;
-        _uploadError = null;
-    }
-
     private async Task Submit()
     {
-        _step = 3;
+        _processing = true;
+        _uploadError = null;
         StateHasChanged();
 
-        // Step 1: create the collection (schema + catalog metadata)
         var created = await IngestorApi.CreateCollectionAsync(new CreateCollectionRequest
         {
             CollectionName = _form.CollectionName,
@@ -244,7 +300,6 @@
             return;
         }
 
-        // Step 2: upload files (optional)
         if (_form.Files.Count == 0)
         {
             NotifState.AddToast($"Collection '{_form.CollectionName}' created.", ToastSeverity.Success);
@@ -254,7 +309,8 @@
 
         var result = await IngestorApi.UploadDocumentsAsync(
             _form.CollectionName, _form.Files, _form.Schema,
-            _form.Description, _form.Tags, _form.GenerateSummary);
+            _form.Description, _form.Tags, _form.GenerateSummary,
+            _form.ExtractionOptions, _form.SplitOptions);
 
         if (result?.TaskId is null)
         {
@@ -262,7 +318,6 @@
             return;
         }
 
-        // Task started — hand off to the notification bell and navigate away
         NotifState.AddTask(result.TaskId, _form.CollectionName);
         Nav.NavigateTo("/");
     }
@@ -273,5 +328,4 @@
         if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
         return $"{bytes / (1024.0 * 1024):F1} MB";
     }
-
 }

@@ -11,6 +11,14 @@ ASP.NET Core service for retrieval and answer generation.
 | **Vector DB** | ChromaDB (REST API) | ChromaDB or swap via `IVectorStore` |
 | **Chunking** | SK `TextChunker` (512 tok/chunk, 100 tok overlap) | same |
 
+Vector-store capabilities are interface-driven. Milvus opts into generated metadata filter expressions and supplies its schema to the prompt renderer. ChromaDB remains compatible for retrieval and ingestion, and supports simple explicit metadata filters by translating them to Chroma `where` clauses, but it does not opt into generated filter prompts.
+
+Generation, search, and OpenAI-compatible vector-store search requests can override the vector database endpoint with `vdb_endpoint`. When an override endpoint or bearer `Authorization` header is present, the RAG server creates a request-scoped vector-store client through `IVectorStoreClientFactory`; retrieval, query decomposition, and provider-specific filter capabilities all use that selected client. `/v2/vector_stores/{vector_store_id}/search` also accepts `embedding_endpoint` / `embedding_model`, `rewrite_query`, OpenAI-style comparison/compound `filters`, and `reranker_endpoint`.
+
+Generation requests can also override answer-generation endpoints with `llm_endpoint` and VLM endpoints with `vlm_endpoint`. The server creates request-scoped chat clients through `IChatCompletionClientFactory`; blank values keep using the configured singleton providers. `embedding_endpoint` / `embedding_model` create request-scoped embedding clients for retrieval, and `reranker_endpoint` routes reranking to a request-selected reranker service, including the OpenAI-compatible vector-store search route.
+
+Role-specific LLM dependencies are also interface-driven. Query rewriting/query decomposition, filter generation, and reflection use keyed `IChatCompletionService` instances. Set `APP_QUERYREWRITER_SERVERURL` / `APP_QUERYREWRITER_APIKEY`, `APP_FILTEREXPRESSIONGENERATOR_SERVERURL` / `APP_FILTEREXPRESSIONGENERATOR_APIKEY`, or `REFLECTION_LLM_SERVERURL` / `REFLECTION_LLM_APIKEY` to route those tasks to separate OpenAI-compatible endpoints; blank values fall back to the main LLM endpoint and `NVIDIA_API_KEY`. Generation and search requests can override these role dependencies with `query_rewriter_model` / `query_rewriter_endpoint`, `filter_expression_generator_model` / `filter_expression_generator_endpoint`, and `reflection_model` / `reflection_endpoint`; raw API callers may also send the matching `*_api_key` fields. `/configuration` and the Blazor settings UI expose and send the effective role models/endpoints, but configured API keys remain server-side.
+
 ### Key env vars
 
 | Variable | Default (Ollama) | Original NIM value |

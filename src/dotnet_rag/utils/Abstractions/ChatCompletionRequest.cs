@@ -6,4 +6,5 @@ public sealed record ChatCompletionRequest(
     bool EnableThinking = false,
     int? MaxTokens = null,
     double? Temperature = null,
-    double? TopP = null);
+    double? TopP = null,
+    int? ThinkingTokenBudget = null);

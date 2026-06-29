@@ -3,6 +3,7 @@ using DotnetRag.Shared.Configuration;
 using DotnetRag.Shared.Embedding;
 using DotnetRag.Shared.LlmProviders;
 using DotnetRag.Shared.Options;
+using DotnetRag.Shared.Prompts;
 using DotnetRag.Shared.Summarization;
 using DotnetRag.Shared.VectorStore;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,9 +26,12 @@ public static class RagInfrastructureExtensions
         RagServerConfiguration config)
     {
         // Named HttpClients for each downstream service
-        services.AddHttpClient("ollama");
-        services.AddHttpClient("openai");
+        var llmTimeout = TimeSpan.FromSeconds(config.LlmHttpTimeoutSeconds);
+        services.AddHttpClient("ollama", c => c.Timeout = llmTimeout);
+        services.AddHttpClient("openai", c => c.Timeout = llmTimeout);
         services.AddHttpClient("chroma");
+        services.AddSingleton(PromptCatalog.Load(config.Prompt_Config_File));
+        services.AddSingleton<IChatCompletionClientFactory, ChatCompletionClientFactory>();
 
         // VectorStoreOptions bound from config
         var vectorStoreOpts = new VectorStoreOptions
@@ -82,12 +86,14 @@ public static class RagInfrastructureExtensions
             services.AddSingleton<IVectorStore>(sp => sp.GetRequiredService<MilvusVectorStore>());
             services.AddSingleton<IVectorStoreManagement>(sp => sp.GetRequiredService<MilvusVectorStore>());
             services.AddSingleton<IVectorDocumentLookup>(sp => sp.GetRequiredService<MilvusVectorStore>());
+            services.AddSingleton<IVectorStoreFilterCapabilities>(sp => sp.GetRequiredService<MilvusVectorStore>());
         }
         else
         {
             services.AddSingleton<IVectorStore>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
             services.AddSingleton<IVectorStoreManagement>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
             services.AddSingleton<IVectorDocumentLookup>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
+            services.AddSingleton<IVectorStoreFilterCapabilities>(sp => sp.GetRequiredService<ChromaDbVectorStore>());
         }
         services.AddSingleton<IVectorStoreClientFactory, VectorStoreClientFactory>();
 
@@ -118,6 +124,33 @@ public static class RagInfrastructureExtensions
                     logger);
             });
         }
+        services.AddKeyedSingleton<IChatCompletionService>("main", (sp, _) =>
+            sp.GetRequiredService<IChatCompletionService>());
+
+        RegisterRoleChatService(
+            services,
+            "query_rewriter",
+            config.QueryRewriterModelOrDefault,
+            config.QueryRewriterEndpoint,
+            config.QueryRewriterEndpointOrDefault,
+            config.QueryRewriterApiKeyOrDefault,
+            config);
+        RegisterRoleChatService(
+            services,
+            "filter_expression_generator",
+            config.FilterExpressionGeneratorModelOrDefault,
+            config.FilterExpressionGeneratorEndpoint,
+            config.FilterExpressionGeneratorEndpointOrDefault,
+            config.FilterExpressionGeneratorApiKeyOrDefault,
+            config);
+        RegisterRoleChatService(
+            services,
+            "reflection",
+            config.ReflectionModelOrDefault,
+            config.ReflectionEndpoint,
+            config.ReflectionEndpointOrDefault,
+            config.ReflectionApiKeyOrDefault,
+            config);
 
         // VLM service — Ollama for local multimodal models, OpenAI-compatible for hosted NIM/OpenAI.
         if (!string.IsNullOrWhiteSpace(config.VlmEndpoint) && !string.IsNullOrWhiteSpace(config.VlmModel))
@@ -145,11 +178,66 @@ public static class RagInfrastructureExtensions
 
         // Summarization stack
         services.AddSingleton(new SummarizationRateLimiter(config.SummarizerMaxParallelization));
+        services.AddSingleton<ISummaryProgressStore>(_ =>
+            string.IsNullOrWhiteSpace(config.SummaryStatusStorePath)
+                ? new InMemorySummaryProgressStore()
+                : new FileSummaryProgressStore(config.SummaryStatusStorePath));
         services.AddSingleton<SummaryProgressTracker>();
         services.AddSingleton<IObjectStore, DisabledSharedObjectStore>();
         services.AddSingleton<ISummarizationService, SummarizationService>();
 
         return services;
+    }
+
+    private static void RegisterRoleChatService(
+        IServiceCollection services,
+        string key,
+        string model,
+        string configuredEndpoint,
+        string effectiveEndpoint,
+        string? apiKey,
+        RagServerConfiguration config)
+    {
+        services.AddKeyedSingleton<IChatCompletionService>(key, (sp, _) =>
+        {
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var provider = ResolveRoleProvider(configuredEndpoint, config);
+            if (provider == "ollama")
+            {
+                var logger = sp.GetRequiredService<ILogger<OllamaChatCompletionService>>();
+                return new OllamaChatCompletionService(
+                    factory,
+                    model,
+                    NormalizeOllamaBase(effectiveEndpoint),
+                    logger);
+            }
+
+            var openAiLogger = sp.GetRequiredService<ILogger<OpenAiChatCompletionService>>();
+            return new OpenAiChatCompletionService(
+                factory,
+                model,
+                effectiveEndpoint,
+                string.IsNullOrWhiteSpace(apiKey) ? null : apiKey,
+                openAiLogger);
+        });
+    }
+
+    private static string ResolveRoleProvider(string configuredEndpoint, RagServerConfiguration config)
+    {
+        if (string.IsNullOrWhiteSpace(configuredEndpoint))
+        {
+            return config.LlmProvider.Trim().ToLowerInvariant();
+        }
+
+        var endpoint = configuredEndpoint.Trim().ToLowerInvariant();
+        if (endpoint.Contains("11434", StringComparison.Ordinal)
+            || endpoint.Contains("/api/chat", StringComparison.Ordinal)
+            || endpoint.Contains("/api/generate", StringComparison.Ordinal))
+        {
+            return "ollama";
+        }
+
+        return "openai";
     }
 
     private sealed class DisabledSharedObjectStore : IObjectStore

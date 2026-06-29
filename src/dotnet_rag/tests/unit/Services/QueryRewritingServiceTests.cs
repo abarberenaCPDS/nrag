@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using DotnetRag.Rag.Services;
 using DotnetRag.Shared.Abstractions;
 using DotnetRag.Shared.Configuration;
 using DotnetRag.Shared.Models;
+using DotnetRag.Shared.Prompts;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -21,7 +23,7 @@ public sealed class QueryRewritingServiceTests
     private static QueryRewritingService Build(IChatCompletionService chat, int history = 5)
     {
         var cfg = new RagServerConfiguration { ConversationHistory = history };
-        return new QueryRewritingService(chat, cfg, NullLogger<QueryRewritingService>.Instance);
+        return new QueryRewritingService(chat, cfg, PromptCatalog.Load(null), NullLogger<QueryRewritingService>.Instance);
     }
 
     [Fact]
@@ -49,6 +51,60 @@ public sealed class QueryRewritingServiceTests
         var result = await svc.RewriteAsync("what is X?", history);
 
         result.Should().Be("what is X in context of Y?");
+    }
+
+    [Fact]
+    public async Task RewriteAsync_RecordsStageSpanWithPromptModelAndUsageTags()
+    {
+        var completed = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "dotnet-rag-server",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity => completed.Add(activity)
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var chat = new Mock<IChatCompletionService>();
+        chat.Setup(c => c.CompleteAsync(It.IsAny<ChatCompletionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatCompletionResponse(
+                "what is X in context of Y?",
+                Usage: new Dictionary<string, object?>
+                {
+                    ["prompt_tokens"] = 11,
+                    ["completion_tokens"] = 4,
+                    ["total_tokens"] = 15
+                }));
+
+        var cfg = new RagServerConfiguration
+        {
+            ConversationHistory = 3,
+            QueryRewriterModel = "rewrite-model"
+        };
+        var svc = new QueryRewritingService(
+            chat.Object,
+            cfg,
+            PromptCatalog.Load(null),
+            NullLogger<QueryRewritingService>.Instance);
+        var history = new List<Message>
+        {
+            new("user", "tell me about Y"),
+            new("assistant", "Y is a product"),
+            new("user", "what is X?")
+        };
+
+        await svc.RewriteAsync("what is X?", history);
+
+        var activity = completed.Last(a =>
+            a.DisplayName == "rag.Query Rewriting.token_usage"
+            && Equals(a.GetTagItem("gen_ai.request.model"), "rewrite-model"));
+        activity.GetTagItem("rag.prompt.template").Should().Be("query_rewriter_prompt");
+        activity.GetTagItem("rag.prompt.message_count").Should().Be(2);
+        activity.GetTagItem("rag.query_rewriting.history_message_count").Should().Be(2);
+        activity.GetTagItem("gen_ai.request.model").Should().Be("rewrite-model");
+        activity.GetTagItem("gen_ai.usage.input_tokens").Should().Be(11);
+        activity.GetTagItem("gen_ai.usage.output_tokens").Should().Be(4);
+        activity.GetTagItem("llm.usage.total_tokens").Should().Be(15);
     }
 
     [Fact]

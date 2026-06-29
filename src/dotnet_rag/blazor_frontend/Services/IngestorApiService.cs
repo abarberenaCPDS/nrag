@@ -93,6 +93,8 @@ public sealed class IngestorApiService(HttpClient http)
         string? description,
         List<string>? tags,
         bool generateSummary,
+        UploadExtractionOptions? extractionOptions = null,
+        UploadSplitOptions? splitOptions = null,
         CancellationToken ct = default)
     {
         try
@@ -104,6 +106,8 @@ public sealed class IngestorApiService(HttpClient http)
             {
                 collection_name = collectionName,
                 blocking = false,
+                extraction_options = extractionOptions ?? new UploadExtractionOptions(),
+                split_options = splitOptions ?? new UploadSplitOptions(),
                 generate_summary = generateSummary,
                 documents_catalog_metadata = filesList.Select(f => new
                 {

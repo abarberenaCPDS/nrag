@@ -2,8 +2,18 @@ namespace DotnetRag.Ingestor.Models;
 
 public sealed class SplitOptions
 {
-    public int ChunkSize { get; set; } = 2048;
+    public int ChunkSize { get; set; } = 1024;
     public int ChunkOverlap { get; set; } = 150;
+}
+
+public sealed class ExtractionOptions
+{
+    public bool ExtractText { get; set; } = true;
+    public bool ExtractTables { get; set; } = true;
+    public bool ExtractCharts { get; set; } = true;
+    public bool ExtractImages { get; set; }
+    public string ExtractMethod { get; set; } = "pdfium";
+    public string TextDepth { get; set; } = "page";
 }
 
 public sealed class CustomMetadata
@@ -40,6 +50,7 @@ public sealed class DocumentUploadRequest
         Environment.GetEnvironmentVariable("COLLECTION_NAME") ?? "multimodal_data";
 
     public bool Blocking { get; set; }
+    public ExtractionOptions ExtractionOptions { get; set; } = new();
     public SplitOptions SplitOptions { get; set; } = new();
     public List<CustomMetadata> CustomMetadata { get; set; } = [];
     public bool GenerateSummary { get; set; }

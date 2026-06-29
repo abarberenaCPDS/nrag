@@ -4,7 +4,8 @@
       "Bash(pnpm exec *)",
       "Bash(grep -v \"^$\")",
       "Bash(./node_modules/.bin/tsc --noEmit)",
-      "Bash(git -C /mnt/c/src/rag ls-files variables.env)"
+      "Bash(git -C /mnt/c/src/rag ls-files variables.env)",
+      "Bash(curl -s -X POST http://localhost:8081/generate -H 'Content-Type: application/json' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"first winner?\"}],\"collection_names\":[\"fifa\"],\"use_knowledge_base\":true,\"agentic\":true}')"
     ]
   }
 }

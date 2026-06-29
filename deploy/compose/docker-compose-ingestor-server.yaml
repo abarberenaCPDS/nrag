@@ -214,8 +214,8 @@ services:
       #- MESSAGE_CLIENT_PORT=7671
       #- MESSAGE_CLIENT_TYPE=simple # Configure the ingest service to use the simple broker
       # Message client for production
-      - MESSAGE_CLIENT_HOST=redis
-      - MESSAGE_CLIENT_PORT=6379
+      - MESSAGE_CLIENT_HOST=${REDIS_HOST:-redis}
+      - MESSAGE_CLIENT_PORT=${REDIS_PORT:-6379}
       - MESSAGE_CLIENT_TYPE=redis
       - MINIO_BUCKET=${NVINGEST_OBJECTSTORE_BUCKET:-nv-ingest}
       - MINIO_ACCESS_KEY=${OBJECTSTORE_ACCESSKEY:-seaweedfsadmin}

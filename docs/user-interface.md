@@ -233,8 +233,9 @@ Enable or disable various features:
 | **Include Citations** | Adds source citations to responses. | Enabled |
 | **Use Guardrails** | Applies NeMo Guardrails for safety filtering. | Disabled |
 | **Query Rewriting** | Rewrites queries for better retrieval. | Disabled |
+| **Query Decomposition** | Breaks complex questions into subqueries before final answer synthesis. | Disabled |
 | **VLM Inference** | Enables vision-language model for image analysis. | Disabled |
-| **Filter Generator** | Auto-generates metadata filters from queries. | Disabled |
+| **Filter Generator** | Auto-generates metadata filters from queries when the selected vector database supports generated filters. | Disabled |
 
 ### Model Configuration
 

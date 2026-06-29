@@ -22,7 +22,21 @@
                 {
                     <span class="badge" style="margin-left:4px">@c.CollectionName</span>
                 }
-                @if (!string.IsNullOrWhiteSpace(c.Content))
+                @if (c.Metadata?.PageNumber is > 0)
+                {
+                    <span class="badge" style="margin-left:4px">page @c.Metadata.PageNumber</span>
+                }
+                @if (TryGetCitationImageSrc(c, out var imageSrc))
+                {
+                    <div class="citation-asset">
+                        <img src="@imageSrc" alt="@GetCitationAltText(c)" loading="lazy" />
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(c.Text))
+                    {
+                        <div class="citation-snippet">@c.Text</div>
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(c.Content))
                 {
                     <div class="citation-snippet">@c.Content</div>
                 }
@@ -41,4 +55,63 @@
 @code {
     [Parameter, EditorRequired] public List<Citation> Citations { get; set; } = [];
     [Parameter] public EventCallback OnClose { get; set; }
+
+    private static bool TryGetCitationImageSrc(Citation citation, out string imageSrc)
+    {
+        imageSrc = string.Empty;
+        if (!IsVisualCitation(citation.DocumentType) || string.IsNullOrWhiteSpace(citation.Content))
+        {
+            return false;
+        }
+
+        if (citation.Content.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+        {
+            imageSrc = citation.Content;
+            return true;
+        }
+
+        if (!IsBase64(citation.Content))
+        {
+            return false;
+        }
+
+        imageSrc = $"data:{GetImageMimeType(citation)};base64,{citation.Content}";
+        return true;
+    }
+
+    private static bool IsVisualCitation(string? documentType) =>
+        documentType is not null
+        && (documentType.Equals("image", StringComparison.OrdinalIgnoreCase)
+            || documentType.Equals("table", StringComparison.OrdinalIgnoreCase)
+            || documentType.Equals("chart", StringComparison.OrdinalIgnoreCase)
+            || documentType.Equals("structured", StringComparison.OrdinalIgnoreCase)
+            || documentType.Equals("image_caption", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsBase64(string value)
+    {
+        Span<byte> buffer = new byte[value.Length];
+        return Convert.TryFromBase64String(value, buffer, out _);
+    }
+
+    private static string GetImageMimeType(Citation citation)
+    {
+        var name = citation.DocumentName ?? citation.SourceName ?? string.Empty;
+        var extension = Path.GetExtension(name).ToLowerInvariant();
+        return extension switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            ".gif" => "image/gif",
+            ".bmp" => "image/bmp",
+            _ => "image/png"
+        };
+    }
+
+    private static string GetCitationAltText(Citation citation) =>
+        citation.DocumentType?.ToLowerInvariant() switch
+        {
+            "table" => $"Table citation from {citation.DocumentName ?? citation.SourceName ?? "source"}",
+            "chart" => $"Chart citation from {citation.DocumentName ?? citation.SourceName ?? "source"}",
+            _ => $"Image citation from {citation.DocumentName ?? citation.SourceName ?? "source"}"
+        };
 }

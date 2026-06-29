@@ -8,5 +8,6 @@ public interface IRerankerClient
         string query,
         IReadOnlyList<VectorSearchResult> candidates,
         int topK,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? endpoint = null);
 }

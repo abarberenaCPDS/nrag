@@ -49,18 +49,11 @@ public sealed class OllamaChatCompletionService : IChatCompletionService
             content = m.Content
         }).ToList();
 
-        var payload = new Dictionary<string, object?>
-        {
-            ["model"] = model,
-            ["messages"] = messages,
-            ["stream"] = false,
-            ["options"] = new Dictionary<string, object?>
-            {
-                ["temperature"] = request.Temperature ?? 0.0,
-                ["top_p"] = request.TopP ?? 1.0,
-                ["num_predict"] = request.MaxTokens ?? 4096
-            }
-        };
+        var payload = BuildPayload(
+            model,
+            messages,
+            request,
+            stream: false);
 
         var json = JsonSerializer.Serialize(payload, JsonOpts);
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -101,22 +94,28 @@ public sealed class OllamaChatCompletionService : IChatCompletionService
         ChatCompletionRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await foreach (var delta in StreamDeltasAsync(request, cancellationToken))
+        {
+            if (!string.IsNullOrEmpty(delta.Content))
+            {
+                yield return delta.Content;
+            }
+        }
+    }
+
+    public async IAsyncEnumerable<ChatStreamDelta> StreamDeltasAsync(
+        ChatCompletionRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
         var model = string.IsNullOrWhiteSpace(request.Model) ? _defaultModel : request.Model;
 
         var messages = request.Messages.Select(m => new { role = m.Role, content = m.Content }).ToList();
 
-        var payload = new Dictionary<string, object?>
-        {
-            ["model"] = model,
-            ["messages"] = messages,
-            ["stream"] = true,
-            ["options"] = new Dictionary<string, object?>
-            {
-                ["temperature"] = request.Temperature ?? 0.0,
-                ["top_p"] = request.TopP ?? 1.0,
-                ["num_predict"] = request.MaxTokens ?? 4096
-            }
-        };
+        var payload = BuildPayload(
+            model,
+            messages,
+            request,
+            stream: true);
 
         var json = JsonSerializer.Serialize(payload, JsonOpts);
         using var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
@@ -143,13 +142,52 @@ public sealed class OllamaChatCompletionService : IChatCompletionService
             try { node = JsonNode.Parse(line); }
             catch { continue; }
 
-            var token = node?["message"]?["content"]?.GetValue<string>() ?? string.Empty;
+            var message = node?["message"];
+            var token = message?["content"]?.GetValue<string>() ?? string.Empty;
+            var reasoning = message?["reasoning_content"]?.GetValue<string>()
+                ?? message?["reasoning"]?.GetValue<string>()
+                ?? string.Empty;
             var done = node?["done"]?.GetValue<bool>() == true;
 
-            if (!string.IsNullOrEmpty(token))
-                yield return token;
+            if (!string.IsNullOrEmpty(token) || !string.IsNullOrEmpty(reasoning))
+            {
+                yield return new ChatStreamDelta(
+                    Content: string.IsNullOrEmpty(token) ? null : token,
+                    ReasoningContent: string.IsNullOrEmpty(reasoning) ? null : reasoning);
+            }
 
             if (done) break;
         }
+    }
+
+    private static Dictionary<string, object?> BuildPayload(
+        string model,
+        object messages,
+        ChatCompletionRequest request,
+        bool stream)
+    {
+        var options = new Dictionary<string, object?>
+        {
+            ["temperature"] = request.Temperature ?? 0.0,
+            ["top_p"] = request.TopP ?? 1.0,
+            ["num_predict"] = request.MaxTokens ?? 4096
+        };
+
+        if (request.EnableThinking || request.ThinkingTokenBudget.HasValue)
+        {
+            options["think"] = request.EnableThinking;
+            if (request.EnableThinking && request.ThinkingTokenBudget.GetValueOrDefault() > 0)
+            {
+                options["thinking_token_budget"] = request.ThinkingTokenBudget;
+            }
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["messages"] = messages,
+            ["stream"] = stream,
+            ["options"] = options
+        };
     }
 }

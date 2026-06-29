@@ -38,6 +38,7 @@ dependencies = [
     "protobuf>=6.33.5",
     "lark>=1.2.2",
     "python-dateutil>=2.9.0.post0",
+    "playwright>=1.60.0",
 ]
 
 [project.optional-dependencies]

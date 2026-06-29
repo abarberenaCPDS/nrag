@@ -3,10 +3,109 @@
 <div class="settings-section">
     <h2>Feature Toggles</h2>
 
-    <SettingsToggle Label="Enable Reranker" Description="Use reranking to improve document relevance." @bind-Value="S.EnableReranker" />
-    <SettingsToggle Label="Include Citations" Description="Add source citations to responses." @bind-Value="S.EnableCitations" />
-    <SettingsToggle Label="Query Rewriting" Description="Rewrite user queries for better retrieval." @bind-Value="S.EnableQueryRewriting" />
-    <SettingsToggle Label="Use Guardrails" Description="Apply safety guardrails to responses." @bind-Value="S.EnableGuardrails" />
-    <SettingsToggle Label="VLM Inference" Description="Enable vision-language model inference." @bind-Value="S.EnableVlmInference" />
-    <SettingsToggle Label="Filter Generator" Description="Auto-generate filters from queries." @bind-Value="S.EnableFilterGenerator" />
+    <SettingsToggle Label="Enable Reranker" Description="Use reranking to improve document relevance." @bind-Value="S.EnableReranker" @bind-Value:after="S.NotifyChange" />
+    <SettingsToggle Label="Include Citations" Description="Add source citations to responses." @bind-Value="S.EnableCitations" @bind-Value:after="S.NotifyChange" />
+    <SettingsToggle Label="Query Rewriting" Description="Rewrite user queries for better retrieval." @bind-Value="S.EnableQueryRewriting" @bind-Value:after="S.NotifyChange" />
+    <SettingsToggle Label="Query Decomposition" Description="Break complex questions into subqueries before final synthesis." @bind-Value="S.EnableQueryDecomposition" @bind-Value:after="S.NotifyChange" />
+    <SettingsToggle Label="Use Guardrails" Description="Apply safety guardrails to responses."
+        Value="@S.EnableGuardrails" ValueChanged="HandleGuardrailsChanged" />
+    <SettingsToggle Label="VLM Inference" Description="Enable vision-language model inference."
+        Value="@S.EnableVlmInference" ValueChanged="HandleVlmChanged" />
+    @if (S.EnableVlmInference)
+    {
+        <SettingsToggle Label="VLM Thinking" Description="Request reasoning mode from compatible VLM endpoints." @bind-Value="S.VlmEnableThinking" @bind-Value:after="S.NotifyChange" />
+        <SettingsNumber Label="VLM Thinking Budget" Description="Maximum VLM reasoning tokens; 0 leaves the endpoint default." @bind-Value="S.VlmThinkingTokenBudget" @bind-Value:after="S.NotifyChange" Min="0" Max="128000" />
+        <SettingsToggle Label="Filter VLM Thinking" Description="Preserve the request flag for reasoning-capable VLM streams." @bind-Value="S.VlmFilterThinkingTokens" @bind-Value:after="S.NotifyChange" />
+    }
+    <SettingsToggle Label="Filter Generator" Description="@FilterGeneratorDescription" @bind-Value="S.EnableFilterGenerator" @bind-Value:after="S.NotifyChange" />
 </div>
+
+@if (_showWarning)
+{
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;display:flex;align-items:center;justify-content:center;"
+         @onclick="CancelWarning">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;max-width:420px;width:calc(100% - 32px);box-shadow:0 8px 32px rgba(0,0,0,0.4);"
+             @onclick:stopPropagation="true">
+            <h3 style="margin:0 0 8px;font-size:16px;font-weight:600;">@_warningTitle</h3>
+            <p style="margin:0 0 16px;font-size:13px;color:var(--text-muted);line-height:1.5;">@_warningDesc</p>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:20px;">
+                <input type="checkbox" @bind="_dontShowAgain" style="accent-color:var(--accent);" />
+                Don't show this warning again
+            </label>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:7px 16px;cursor:pointer;color:var(--text-muted);font-size:13px;"
+                        @onclick="CancelWarning">Cancel</button>
+                <button style="background:var(--accent);border:none;border-radius:6px;padding:7px 16px;cursor:pointer;color:#000;font-size:13px;font-weight:500;"
+                        @onclick="ConfirmWarning">Enable</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _showWarning;
+    private bool _dontShowAgain;
+    private string _warningTitle = "";
+    private string _warningDesc = "";
+    private string _pendingWarningId = "";
+    private Action? _onConfirm;
+    private Action? _onCancel;
+    private readonly HashSet<string> _suppressedWarnings = [];
+
+    private void HandleGuardrailsChanged(bool v) => OnRiskyToggle(v, "guardrails",
+        "Enable Guardrails",
+        "Guardrails require a configured NIM guardrails endpoint. Enabling this without a valid endpoint will cause generation requests to fail.",
+        () => S.EnableGuardrails = true,
+        () => S.EnableGuardrails = false);
+
+    private void HandleVlmChanged(bool v) => OnRiskyToggle(v, "vlm",
+        "Enable VLM Inference",
+        "VLM Inference requires a configured vision-language model endpoint. Images will be sent to that endpoint with each request.",
+        () => S.EnableVlmInference = true,
+        () => S.EnableVlmInference = false);
+
+    private string FilterGeneratorDescription =>
+        string.Equals(S.VectorStoreProvider, "milvus", StringComparison.OrdinalIgnoreCase)
+            ? "Auto-generate Milvus metadata filters from queries."
+            : "Milvus-only backend feature; ignored by ChromaDB.";
+
+    private void OnRiskyToggle(bool newValue, string warningId, string title, string desc,
+        Action onEnable, Action onDisable)
+    {
+        if (!newValue)
+        {
+            onDisable();
+            S.NotifyChange();
+            return;
+        }
+        if (_suppressedWarnings.Contains(warningId))
+        {
+            onEnable();
+            S.NotifyChange();
+            return;
+        }
+        _warningTitle = title;
+        _warningDesc = desc;
+        _pendingWarningId = warningId;
+        _onConfirm = onEnable;
+        _onCancel = onDisable;
+        _dontShowAgain = false;
+        _showWarning = true;
+    }
+
+    private void ConfirmWarning()
+    {
+        if (_dontShowAgain)
+            _suppressedWarnings.Add(_pendingWarningId);
+        _showWarning = false;
+        _onConfirm?.Invoke();
+        S.NotifyChange();
+    }
+
+    private void CancelWarning()
+    {
+        _showWarning = false;
+        _onCancel?.Invoke();
+        S.NotifyChange();
+    }
+}

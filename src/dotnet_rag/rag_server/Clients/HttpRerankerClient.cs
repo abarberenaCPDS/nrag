@@ -18,7 +18,8 @@ public sealed class HttpRerankerClient(
         string query,
         IReadOnlyList<VectorSearchResult> candidates,
         int topK,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? endpoint = null)
     {
         if (candidates.Count == 0)
         {
@@ -36,27 +37,42 @@ public sealed class HttpRerankerClient(
             TopK: topK);
 
         var client = httpClientFactory.CreateClient("reranker");
-        var endpoint = BuildRerankerEndpoint(config.RerankerServiceUrl);
+        var rerankerEndpoint = BuildRerankerEndpoint(
+            string.IsNullOrWhiteSpace(endpoint) ? config.RerankerServiceUrl : endpoint);
 
-        logger.LogDebug("Calling reranker-service endpoint={Endpoint} chunks={Count}", endpoint, candidates.Count);
+        logger.LogDebug("Calling reranker-service endpoint={Endpoint} chunks={Count}", rerankerEndpoint, candidates.Count);
 
-        using var response = await client.PostAsJsonAsync(endpoint, request, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.PostAsJsonAsync(rerankerEndpoint, request, cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
             throw new HttpRequestException(
-                $"Reranker service failed ({(int)response.StatusCode}): {responseBody}");
+                $"Reranker NIM unavailable at {NormalizeServiceUrl(string.IsNullOrWhiteSpace(endpoint) ? config.RerankerServiceUrl : endpoint)}. Please verify the service is running and accessible.",
+                ex);
         }
 
-        var parsed = JsonSerializer.Deserialize<RerankResponse>(responseBody, JsonOptions)
-            ?? throw new InvalidOperationException("Reranker service returned an empty response.");
+        using (response)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        return parsed.Results.Select(item => new VectorSearchResult(
-            Id: item.Id,
-            Text: item.Text,
-            Score: item.RelevanceScore,
-            Metadata: item.Metadata)).ToList();
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException(
+                    $"Reranker service failed ({(int)response.StatusCode}): {responseBody}");
+            }
+
+            var parsed = JsonSerializer.Deserialize<RerankResponse>(responseBody, JsonOptions)
+                ?? throw new InvalidOperationException("Reranker service returned an empty response.");
+
+            return parsed.Results.Select(item => new VectorSearchResult(
+                Id: item.Id,
+                Text: item.Text,
+                Score: item.RelevanceScore,
+                Metadata: item.Metadata)).ToList();
+        }
     }
 
     private static string BuildRerankerEndpoint(string serviceUrl)
@@ -77,5 +93,17 @@ public sealed class HttpRerankerClient(
         }
 
         return $"{normalized}/v1/rerank";
+    }
+
+    private static string NormalizeServiceUrl(string serviceUrl)
+    {
+        var normalized = serviceUrl.Trim();
+        if (!normalized.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            && !normalized.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = $"http://{normalized}";
+        }
+
+        return normalized.TrimEnd('/');
     }
 }

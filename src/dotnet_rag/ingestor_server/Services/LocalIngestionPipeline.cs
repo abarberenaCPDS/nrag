@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using DotnetRag.Ingestor.Models;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
 
@@ -21,9 +22,12 @@ public sealed class LocalIngestionPipeline : IIngestionPipeline
     public async Task<IngestionPipelineResult> ExtractAsync(
         string path,
         string filename,
+        ExtractionOptions? extractionOptions = null,
         CancellationToken cancellationToken = default)
     {
-        var text = await ExtractTextAsync(path, filename, cancellationToken);
+        var text = extractionOptions?.ExtractText == false
+            ? string.Empty
+            : await ExtractTextAsync(path, filename, cancellationToken);
         return new IngestionPipelineResult(
             text,
             new Dictionary<string, object?>

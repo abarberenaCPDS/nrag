@@ -1,9 +1,16 @@
 using DotnetRag.Ingestor.Models;
 using DotnetRag.Ingestor.Services;
 using DotnetRag.Ingestor.Services.ObjectStore;
+using DotnetRag.Ingestor.Services.Telemetry;
+using DotnetRag.Shared.Abstractions;
+using DotnetRag.Shared.Configuration;
+using DotnetRag.Shared.Summarization;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using System.Net;
+using System.Text.Json;
 
 namespace DotnetRag.Tests.Unit.Services;
 
@@ -64,6 +71,75 @@ public sealed class PersistenceAndPipelineTests
 
         catalog.SavedEntries.Should().Contain(entry => entry.Name == "backend_catalog");
         catalog.SavedEntries.Should().Contain(entry => entry.Name == "created");
+    }
+
+    [Fact]
+    public async Task DeleteCollectionsAsync_RemovesOwnedSummaryVectorCollection()
+    {
+        var store = new InMemoryIngestorStore();
+        store.CreateCollection(new CreateCollectionRequest { CollectionName = "docs" });
+        store.CreateCollection(new CreateCollectionRequest { CollectionName = "summary_docs" });
+
+        var deletedCollections = new List<string>();
+        var management = new Mock<IVectorStoreManagement>();
+        management
+            .Setup(m => m.DeleteCollectionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((name, _) => deletedCollections.Add(name))
+            .Returns(Task.CompletedTask);
+        management
+            .Setup(m => m.CollectionExistsAsync("summary_docs", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var factory = new Mock<IVectorStoreClientFactory>();
+        factory
+            .Setup(f => f.Create(
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>()))
+            .Returns(new VectorStoreClient(Mock.Of<IVectorStore>(), management.Object));
+
+        var service = CreateIngestorService(store, factory.Object);
+        var request = new DefaultHttpContext().Request;
+
+        var response = await service.DeleteCollectionsAsync(request, ["docs"], vdbEndpoint: null);
+
+        response.Successful.Should().ContainSingle().Which.Should().Be("docs");
+        response.Failed.Should().BeEmpty();
+        deletedCollections.Should().Equal("docs", "summary_docs");
+        store.CollectionExists("summary_docs").Should().BeFalse();
+    }
+
+    [Fact]
+    public void GetCollections_HidesAuxiliaryVectorCollections()
+    {
+        var store = new InMemoryIngestorStore();
+        var management = new Mock<IVectorStoreManagement>();
+        management
+            .Setup(m => m.ListCollectionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new VectorStoreCollectionDetails("docs", 3, [], new Dictionary<string, object?>()),
+                new VectorStoreCollectionDetails("summary_docs", 1, [], new Dictionary<string, object?>())
+            ]);
+
+        var factory = new Mock<IVectorStoreClientFactory>();
+        factory
+            .Setup(f => f.Create(
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>()))
+            .Returns(new VectorStoreClient(Mock.Of<IVectorStore>(), management.Object));
+
+        var service = CreateIngestorService(store, factory.Object);
+        var request = new DefaultHttpContext().Request;
+
+        var response = service.GetCollections(request, vdbEndpoint: null);
+
+        response.Collections.Select(collection => collection.CollectionName).Should().ContainSingle().Which.Should().Be("docs");
+        store.CollectionExists("docs").Should().BeTrue();
+        store.CollectionExists("summary_docs").Should().BeFalse();
     }
 
     [Fact]
@@ -282,6 +358,129 @@ public sealed class PersistenceAndPipelineTests
     }
 
     [Fact]
+    public void DocumentUploadRequest_DeserializesWorkbenchQuickstartOptions()
+    {
+        const string payload = """
+            {
+              "vdb_endpoint": "http://localhost:19530",
+              "collection_name": "multimodal_data",
+              "extraction_options": {
+                "extract_text": true,
+                "extract_tables": true,
+                "extract_charts": true,
+                "extract_images": false,
+                "extract_method": "pdfium",
+                "text_depth": "page"
+              },
+              "split_options": {
+                "chunk_size": 1024,
+                "chunk_overlap": 150
+              }
+            }
+            """;
+
+        var request = JsonSerializer.Deserialize<DocumentUploadRequest>(
+            payload,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+
+        request.Should().NotBeNull();
+        request!.VdbEndpoint.Should().Be("http://localhost:19530");
+        request.CollectionName.Should().Be("multimodal_data");
+        request.ExtractionOptions.ExtractText.Should().BeTrue();
+        request.ExtractionOptions.ExtractTables.Should().BeTrue();
+        request.ExtractionOptions.ExtractCharts.Should().BeTrue();
+        request.ExtractionOptions.ExtractImages.Should().BeFalse();
+        request.ExtractionOptions.ExtractMethod.Should().Be("pdfium");
+        request.ExtractionOptions.TextDepth.Should().Be("page");
+        request.SplitOptions.ChunkSize.Should().Be(1024);
+        request.SplitOptions.ChunkOverlap.Should().Be(150);
+    }
+
+    [Fact]
+    public async Task HttpExternalIngestionPipeline_ForwardsExtractionOptions()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.txt");
+        var handler = new StubHandler("""{"text":"ok"}""");
+        try
+        {
+            await File.WriteAllTextAsync(path, "input");
+            using var http = new HttpClient(handler)
+            {
+                BaseAddress = new Uri("http://localhost")
+            };
+            var pipeline = new HttpExternalIngestionPipeline(
+                http,
+                "nvingest",
+                new Uri("http://localhost/extract"),
+                "token");
+
+            await pipeline.ExtractAsync(
+                path,
+                Path.GetFileName(path),
+                new ExtractionOptions
+                {
+                    ExtractText = true,
+                    ExtractTables = false,
+                    ExtractCharts = false,
+                    ExtractImages = false,
+                    ExtractMethod = "pdfium",
+                    TextDepth = "page"
+                });
+
+            handler.LastContent.Should().Contain("name=extraction_options");
+            handler.LastContent.Should().Contain("\"extract_text\":true");
+            handler.LastContent.Should().Contain("\"extract_tables\":false");
+            handler.LastContent.Should().Contain("\"extract_method\":\"pdfium\"");
+            handler.LastContent.Should().Contain("\"text_depth\":\"page\"");
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
+    [Fact]
+    public void IngestorService_BuildVectorMetadata_PropagatesBridgeVisualAssetMetadata()
+    {
+        var documentMetadata = new Dictionary<string, object?>
+        {
+            ["project"] = "alpha"
+        };
+        var documentInfo = new Dictionary<string, object?>
+        {
+            ["document_type"] = "image",
+            ["page_number"] = 3,
+            ["asset_object_names"] = new List<string> { "reports/chart-1.png" },
+            ["content_metadata"] = new Dictionary<string, object?>
+            {
+                ["type"] = "image",
+                ["page_number"] = 3,
+                ["location"] = new List<double> { 1, 2, 3, 4 }
+            }
+        };
+
+        var metadata = IngestorService.BuildVectorMetadata(
+            documentMetadata,
+            documentInfo,
+            "report.pdf",
+            "docs");
+
+        metadata["project"].Should().Be("alpha");
+        metadata["filename"].Should().Be("report.pdf");
+        metadata["collection_name"].Should().Be("docs");
+        metadata["type"].Should().Be("image");
+        metadata["page_number"].Should().Be(3);
+        metadata["source_location"].Should().Be("reports/chart-1.png");
+        metadata["stored_image_uri"].Should().Be("reports/chart-1.png");
+        metadata["content_metadata.type"].Should().Be("image");
+        metadata["content_metadata.page_number"].Should().Be(3);
+        metadata["content_metadata.location"].Should().Be("[1,2,3,4]");
+    }
+
+    [Fact]
     public void IngestionPipelineFactory_AppendsBridgePath_ForBaseEndpoint()
     {
         var previousBackend = Environment.GetEnvironmentVariable("APP_INGESTION_BACKEND");
@@ -355,16 +554,19 @@ public sealed class PersistenceAndPipelineTests
 
     private sealed class StubHandler(string responseBody) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(
+        public string? LastContent { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             request.Headers.Authorization?.Scheme.Should().Be("Bearer");
             request.Content.Should().BeOfType<MultipartFormDataContent>();
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            LastContent = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(responseBody)
-            });
+            };
         }
     }
 
@@ -380,4 +582,19 @@ public sealed class PersistenceAndPipelineTests
             SavedEntries = entries;
         }
     }
+
+    private static IngestorService CreateIngestorService(
+        InMemoryIngestorStore store,
+        IVectorStoreClientFactory vectorStoreClientFactory) =>
+        new(
+            store,
+            new IngestionTaskHandler(new InMemoryIngestionTaskStore()),
+            NullLogger<IngestorService>.Instance,
+            vectorStoreClientFactory,
+            Mock.Of<ISummarizationService>(),
+            Mock.Of<IIngestionPipeline>(),
+            Mock.Of<IIngestionJobQueue>(),
+            new DisabledObjectStoreService(),
+            Mock.Of<IIngestionTelemetrySink>(),
+            new RagServerConfiguration());
 }

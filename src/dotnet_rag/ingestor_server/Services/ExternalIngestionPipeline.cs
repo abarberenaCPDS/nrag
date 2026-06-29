@@ -1,3 +1,5 @@
+using DotnetRag.Ingestor.Models;
+
 namespace DotnetRag.Ingestor.Services;
 
 public sealed class ExternalIngestionPipeline(string backendName) : IIngestionPipeline
@@ -9,6 +11,7 @@ public sealed class ExternalIngestionPipeline(string backendName) : IIngestionPi
     public Task<IngestionPipelineResult> ExtractAsync(
         string path,
         string filename,
+        ExtractionOptions? extractionOptions = null,
         CancellationToken cancellationToken = default)
     {
         throw BuildException();

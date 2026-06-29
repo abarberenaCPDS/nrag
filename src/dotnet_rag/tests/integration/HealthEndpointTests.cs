@@ -30,13 +30,23 @@ public sealed class HealthEndpointTests(WebApplicationFactory<Program> factory)
     }
 
     [Fact]
-    public async Task GetV1Health_Returns200()
+    public async Task GetConfiguration_Returns200_WithConfigShape()
     {
         var client = factory.CreateClient();
 
-        var response = await client.GetAsync("/v1/health");
+        var response = await client.GetAsync("/configuration");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(body);
+        doc.RootElement.TryGetProperty("rag_configuration", out _).Should().BeTrue();
+        doc.RootElement.GetProperty("feature_toggles").TryGetProperty("enable_agentic_rag", out _).Should().BeTrue();
+        doc.RootElement.GetProperty("models").TryGetProperty("query_rewriter_model", out _).Should().BeTrue();
+        doc.RootElement.GetProperty("models").TryGetProperty("filter_expression_generator_model", out _).Should().BeTrue();
+        doc.RootElement.GetProperty("models").TryGetProperty("reflection_model", out _).Should().BeTrue();
+        doc.RootElement.GetProperty("endpoints").TryGetProperty("query_rewriter_endpoint", out _).Should().BeTrue();
+        doc.RootElement.GetProperty("endpoints").TryGetProperty("filter_expression_generator_endpoint", out _).Should().BeTrue();
+        doc.RootElement.GetProperty("endpoints").TryGetProperty("reflection_endpoint", out _).Should().BeTrue();
     }
 
     [Fact]
@@ -49,18 +59,5 @@ public sealed class HealthEndpointTests(WebApplicationFactory<Program> factory)
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var contentType = response.Content.Headers.ContentType?.MediaType;
         contentType.Should().StartWith("text/plain");
-    }
-
-    [Fact]
-    public async Task GetConfiguration_Returns200_WithConfigShape()
-    {
-        var client = factory.CreateClient();
-
-        var response = await client.GetAsync("/v1/configuration");
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(body);
-        doc.RootElement.TryGetProperty("rag_configuration", out _).Should().BeTrue();
     }
 }

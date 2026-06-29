@@ -1,5 +1,8 @@
+using System.Diagnostics;
+using DotnetRag.Rag.Observability;
 using DotnetRag.Shared.Abstractions;
 using DotnetRag.Shared.Configuration;
+using DotnetRag.Shared.Prompts;
 
 namespace DotnetRag.Rag.Services;
 
@@ -12,41 +15,29 @@ namespace DotnetRag.Rag.Services;
 public sealed class ReflectionService(
     IChatCompletionService chatService,
     RagServerConfiguration config,
+    PromptCatalog prompts,
     ILogger<ReflectionService> logger)
 {
-    private const string ContextRelevanceSystemPrompt =
-        "You are a relevance grader. Given a user question and a set of retrieved document passages, " +
-        "assess how well the passages address the question. " +
-        "Respond with a single integer: 2 (highly relevant), 1 (partially relevant), or 0 (not relevant). " +
-        "Output only the integer.";
-
-    private const string QueryRewriteSystemPrompt =
-        "Given a user question and the reason why retrieved documents were not relevant, " +
-        "rewrite the question to improve document retrieval. " +
-        "Return only the rewritten question, no explanation.";
-
-    private const string GroundednessSystemPrompt =
-        "You are a groundedness grader. Given a context and a response, assess whether the response " +
-        "is well-grounded in the context. " +
-        "Respond with a single integer: 2 (fully grounded), 1 (partially grounded), or 0 (not grounded). " +
-        "Output only the integer.";
-
-    private const string RegenerationSystemPrompt =
-        "You are a helpful assistant. Using only the provided context, answer the user's question. " +
-        "If the context does not contain sufficient information, say so clearly.";
-
     // Phase 1: Check if retrieved context is relevant to the query.
     // Returns (isRelevant, rewrittenQuery). rewrittenQuery is non-null when
     // a retry with a different query is recommended.
     public async Task<(bool IsRelevant, string? RewrittenQuery)> CheckContextRelevanceAsync(
         string query,
         string context,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? modelOverride = null)
     {
-        var score = await ScoreAsync(
-            ContextRelevanceSystemPrompt,
-            $"Question: {query}\n\nContext:\n{context}",
-            cancellationToken);
+        var prompt = prompts.ReflectionRelevanceCheckPrompt;
+        var score = await ScoreAsync(prompt, new Dictionary<string, string?>
+        {
+            ["query"] = query,
+            ["context"] = context
+        },
+        "rag.Self Reflection.context_relevance.token_usage",
+        "context_relevance",
+        "reflection_relevance_check_prompt",
+        modelOverride,
+        cancellationToken);
 
         if (score >= config.ReflectionContextThreshold)
         {
@@ -58,7 +49,7 @@ public sealed class ReflectionService(
             score,
             config.ReflectionContextThreshold);
 
-        var rewritten = await RewriteForRetrievalAsync(query, score, cancellationToken);
+        var rewritten = await RewriteForRetrievalAsync(query, score, modelOverride, cancellationToken);
         return (false, rewritten);
     }
 
@@ -69,12 +60,20 @@ public sealed class ReflectionService(
         string query,
         string context,
         string response,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? modelOverride = null)
     {
-        var score = await ScoreAsync(
-            GroundednessSystemPrompt,
-            $"Context:\n{context}\n\nResponse:\n{response}",
-            cancellationToken);
+        var prompt = prompts.ReflectionGroundednessCheckPrompt;
+        var score = await ScoreAsync(prompt, new Dictionary<string, string?>
+        {
+            ["context"] = context,
+            ["response"] = response
+        },
+        "rag.Self Reflection.response_groundedness.token_usage",
+        "response_groundedness",
+        "reflection_groundedness_check_prompt",
+        modelOverride,
+        cancellationToken);
 
         if (score >= config.ReflectionGroundednessThreshold)
         {
@@ -86,27 +85,42 @@ public sealed class ReflectionService(
             score,
             config.ReflectionGroundednessThreshold);
 
-        var regenerated = await RegenerateResponseAsync(query, context, cancellationToken);
+        var regenerated = await RegenerateResponseAsync(query, context, modelOverride, cancellationToken);
         return (false, regenerated);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private async Task<int> ScoreAsync(
-        string systemPrompt,
-        string userContent,
+        PromptSection prompt,
+        IReadOnlyDictionary<string, string?> values,
+        string spanName,
+        string step,
+        string promptTemplate,
+        string? modelOverride,
         CancellationToken cancellationToken)
     {
         var request = new ChatCompletionRequest(
-            Model: config.LlmModel,
-            Messages: [new("system", systemPrompt), new("user", userContent)],
+            Model: string.IsNullOrWhiteSpace(modelOverride)
+                ? config.ReflectionModelOrDefault
+                : modelOverride,
+            Messages:
+            [
+                new("system", PromptCatalog.Render(prompt.System, values)),
+                new("user", PromptCatalog.Render(prompt.Human, values))
+            ],
             Temperature: 0.0,
             TopP: 0.1,
             MaxTokens: 8);
 
         try
         {
-            var response = await chatService.CompleteAsync(request, cancellationToken);
+            var response = await CompleteStageAsync(
+                request,
+                spanName,
+                step,
+                promptTemplate,
+                cancellationToken);
             var text = response.Content?.Trim() ?? string.Empty;
 
             if (text.Contains('2')) return 2;
@@ -123,18 +137,30 @@ public sealed class ReflectionService(
     private async Task<string?> RewriteForRetrievalAsync(
         string query,
         int score,
+        string? modelOverride,
         CancellationToken cancellationToken)
     {
         var reason = score == 0
             ? "The retrieved documents were completely irrelevant."
             : "The retrieved documents were only partially relevant.";
 
+        var prompt = prompts.ReflectionQueryRewriterPrompt;
         var request = new ChatCompletionRequest(
-            Model: config.LlmModel,
+            Model: string.IsNullOrWhiteSpace(modelOverride)
+                ? config.ReflectionModelOrDefault
+                : modelOverride,
             Messages:
             [
-                new("system", QueryRewriteSystemPrompt),
-                new("user", $"Original question: {query}\nReason: {reason}")
+                new("system", PromptCatalog.Render(prompt.System, new Dictionary<string, string?>
+                {
+                    ["query"] = query,
+                    ["reason"] = reason
+                })),
+                new("user", PromptCatalog.Render(prompt.Human, new Dictionary<string, string?>
+                {
+                    ["query"] = query,
+                    ["reason"] = reason
+                }))
             ],
             Temperature: 0.0,
             TopP: 0.1,
@@ -142,7 +168,12 @@ public sealed class ReflectionService(
 
         try
         {
-            var response = await chatService.CompleteAsync(request, cancellationToken);
+            var response = await CompleteStageAsync(
+                request,
+                "rag.Self Reflection.query_rewrite.token_usage",
+                "query_rewrite",
+                "reflection_query_rewriter_prompt",
+                cancellationToken);
             return response.Content?.Trim();
         }
         catch (Exception ex)
@@ -155,14 +186,26 @@ public sealed class ReflectionService(
     private async Task<string?> RegenerateResponseAsync(
         string query,
         string context,
+        string? modelOverride,
         CancellationToken cancellationToken)
     {
+        var prompt = prompts.ReflectionResponseRegenerationPrompt;
         var request = new ChatCompletionRequest(
-            Model: config.LlmModel,
+            Model: string.IsNullOrWhiteSpace(modelOverride)
+                ? config.ReflectionModelOrDefault
+                : modelOverride,
             Messages:
             [
-                new("system", RegenerationSystemPrompt),
-                new("user", $"Context:\n{context}\n\nQuestion: {query}")
+                new("system", PromptCatalog.Render(prompt.System, new Dictionary<string, string?>
+                {
+                    ["query"] = query,
+                    ["context"] = context
+                })),
+                new("user", PromptCatalog.Render(prompt.Human, new Dictionary<string, string?>
+                {
+                    ["query"] = query,
+                    ["context"] = context
+                }))
             ],
             Temperature: config.Temperature,
             TopP: config.TopP,
@@ -170,13 +213,44 @@ public sealed class ReflectionService(
 
         try
         {
-            var response = await chatService.CompleteAsync(request, cancellationToken);
+            var response = await CompleteStageAsync(
+                request,
+                "rag.Self Reflection.response_regeneration.token_usage",
+                "response_regeneration",
+                "reflection_response_regeneration_prompt",
+                cancellationToken);
             return response.Content?.Trim();
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Reflection response regeneration failed.");
             return null;
+        }
+    }
+
+    private async Task<ChatCompletionResponse> CompleteStageAsync(
+        ChatCompletionRequest request,
+        string spanName,
+        string step,
+        string promptTemplate,
+        CancellationToken cancellationToken)
+    {
+        using var activity = RagMetrics.ActivitySource.StartActivity(spanName);
+        activity?.SetTag("rag.reflection.step", step);
+        activity?.SetTag("rag.prompt.template", promptTemplate);
+        activity?.SetTag("rag.prompt.message_count", request.Messages.Count);
+        activity?.SetTag("gen_ai.request.model", request.Model);
+
+        try
+        {
+            var response = await chatService.CompleteAsync(request, cancellationToken);
+            RagTraceAttributes.SetLlmUsageTags(activity, response.Usage);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
         }
     }
 }

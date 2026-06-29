@@ -47,34 +47,15 @@ public sealed class OpenAiChatCompletionService : IChatCompletionService
     {
         var model = string.IsNullOrWhiteSpace(request.Model) ? _defaultModel : request.Model;
 
-        var payload = new Dictionary<string, object?>
-        {
-            ["model"] = model,
-            ["messages"] = request.Messages.Select(m => new
-            {
-                role = m.Role,
-                content = m.Content
-            }).ToList(),
-            ["stream"] = false,
-            ["temperature"] = request.Temperature ?? 0.0,
-            ["top_p"] = request.TopP ?? 1.0,
-            ["max_tokens"] = request.MaxTokens ?? 16256
-        };
+        var payload = BuildPayload(
+            model,
+            request,
+            stream: false);
 
         var json = JsonSerializer.Serialize(payload, JsonOpts);
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _chatEndpoint)
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json")
-        };
-
-        if (!string.IsNullOrWhiteSpace(_apiKey))
-        {
-            httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
-        }
-
         _logger.LogDebug("OpenAI chat → model={Model} endpoint={Endpoint}", model, _chatEndpoint);
 
-        var response = await _http.SendAsync(httpRequest, cancellationToken);
+        using var response = await SendCompleteRequestAsync(json, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -103,22 +84,103 @@ public sealed class OpenAiChatCompletionService : IChatCompletionService
         return new ChatCompletionResponse(Content: text, Usage: usage);
     }
 
+    private async Task<HttpResponseMessage> SendCompleteRequestAsync(
+        string json,
+        CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 2;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _chatEndpoint)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+
+            if (!string.IsNullOrWhiteSpace(_apiKey))
+            {
+                httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+            }
+
+            try
+            {
+                return await _http.SendAsync(httpRequest, cancellationToken);
+            }
+            catch (HttpRequestException ex) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "OpenAI-compatible chat request failed transiently; retrying once.");
+            }
+        }
+
+        throw new InvalidOperationException("OpenAI-compatible chat retry loop exited unexpectedly.");
+    }
+
+    private static Dictionary<string, object?> BuildPayload(
+        string model,
+        ChatCompletionRequest request,
+        bool stream)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["messages"] = request.Messages.Select(m => new
+            {
+                role = m.Role,
+                content = m.Content
+            }).ToList(),
+            ["stream"] = stream,
+            ["temperature"] = request.Temperature ?? 0.0,
+            ["top_p"] = request.TopP ?? 1.0,
+            ["max_tokens"] = request.MaxTokens ?? 16256
+        };
+        if (stream)
+        {
+            payload["stream_options"] = new Dictionary<string, object?>
+            {
+                ["include_usage"] = true
+            };
+        }
+
+        if (request.EnableThinking || request.ThinkingTokenBudget.HasValue)
+        {
+            payload["chat_template_kwargs"] = new Dictionary<string, object?>
+            {
+                ["enable_thinking"] = request.EnableThinking
+            };
+            if (request.EnableThinking && request.ThinkingTokenBudget.GetValueOrDefault() > 0)
+            {
+                payload["thinking_token_budget"] = request.ThinkingTokenBudget;
+            }
+        }
+
+        return payload;
+    }
+
     // Streams tokens from OpenAI-compatible SSE: "data: {...}\n\n", terminated by "data: [DONE]"
     public async IAsyncEnumerable<string> StreamAsync(
         ChatCompletionRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await foreach (var delta in StreamDeltasAsync(request, cancellationToken))
+        {
+            if (!string.IsNullOrEmpty(delta.Content))
+            {
+                yield return delta.Content;
+            }
+        }
+    }
+
+    public async IAsyncEnumerable<ChatStreamDelta> StreamDeltasAsync(
+        ChatCompletionRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
         var model = string.IsNullOrWhiteSpace(request.Model) ? _defaultModel : request.Model;
 
-        var payload = new Dictionary<string, object?>
-        {
-            ["model"] = model,
-            ["messages"] = request.Messages.Select(m => new { role = m.Role, content = m.Content }).ToList(),
-            ["stream"] = true,
-            ["temperature"] = request.Temperature ?? 0.0,
-            ["top_p"] = request.TopP ?? 1.0,
-            ["max_tokens"] = request.MaxTokens ?? 16256
-        };
+        var payload = BuildPayload(
+            model,
+            request,
+            stream: true);
 
         var json = JsonSerializer.Serialize(payload, JsonOpts);
         using var reqMsg = new HttpRequestMessage(HttpMethod.Post, _chatEndpoint)
@@ -154,13 +216,41 @@ public sealed class OpenAiChatCompletionService : IChatCompletionService
             try { node = JsonNode.Parse(data); }
             catch { continue; }
 
-            var token = node?["choices"]?[0]?["delta"]?["content"]?.GetValue<string>() ?? string.Empty;
-            if (!string.IsNullOrEmpty(token))
-                yield return token;
+            var usage = ParseUsage(node?["usage"]);
+            var choice = node?["choices"] is JsonArray choices && choices.Count > 0
+                ? choices[0]
+                : null;
+            var delta = choice?["delta"];
+            var token = delta?["content"]?.GetValue<string>() ?? string.Empty;
+            var reasoning = delta?["reasoning_content"]?.GetValue<string>()
+                ?? delta?["reasoning"]?.GetValue<string>()
+                ?? string.Empty;
+            if (!string.IsNullOrEmpty(token) || !string.IsNullOrEmpty(reasoning) || usage is not null)
+            {
+                yield return new ChatStreamDelta(
+                    Content: string.IsNullOrEmpty(token) ? null : token,
+                    ReasoningContent: string.IsNullOrEmpty(reasoning) ? null : reasoning,
+                    Usage: usage);
+            }
 
-            var finishReason = node?["choices"]?[0]?["finish_reason"]?.GetValue<string>();
+            var finishReason = choice?["finish_reason"]?.GetValue<string>();
             if (finishReason == "stop") break;
         }
+    }
+
+    private static IReadOnlyDictionary<string, object?>? ParseUsage(JsonNode? usageNode)
+    {
+        if (usageNode is null)
+        {
+            return null;
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["prompt_tokens"] = usageNode["prompt_tokens"]?.GetValue<int?>() ?? 0,
+            ["completion_tokens"] = usageNode["completion_tokens"]?.GetValue<int?>() ?? 0,
+            ["total_tokens"] = usageNode["total_tokens"]?.GetValue<int?>() ?? 0
+        };
     }
 
     private static string NormalizeChatEndpoint(string url)

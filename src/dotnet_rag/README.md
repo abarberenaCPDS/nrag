@@ -13,7 +13,14 @@ This tree is the C#/.NET 10 migration target for `src/nvidia_rag`.
 
 - ASP.NET Core service shells for the ingestor, RAG, and reranker hosts
 - Shared abstractions for chat, embeddings, vector search, and rerank contracts
-- Local-first config stubs for Ollama, ChromaDB, and telemetry
+- Local-first config stubs for Ollama, ChromaDB, Milvus, and telemetry
+- Blazor Server UI wired to the same request contracts and feature toggles as the .NET RAG server
+
+## Provider boundaries
+
+- Vector database behavior is selected through shared interfaces. ChromaDB and Milvus are concrete implementations behind `IVectorStore`, `IVectorStoreManagement`, and related provider contracts.
+- Backend-specific filter support belongs in the vector store implementation. Milvus supports generated metadata filter expressions through `IVectorStoreFilterCapabilities`; ChromaDB does not opt into generated filters, but it translates simple explicit metadata filter expressions into native Chroma `where` clauses.
+- The Blazor settings UI sends feature flags such as query decomposition and filter generation to the server. The server decides whether a selected provider can execute that feature, so UI state stays synchronized without hard-coding provider behavior into chat requests.
 
 ## Local dev config unification
 

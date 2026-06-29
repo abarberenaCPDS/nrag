@@ -245,7 +245,7 @@
         <!-- Footer: Delete + Add Source (mirrors React drawer footer) -->
         <div style="padding:16px;border-top:1px solid var(--border);display:flex;gap:8px;">
             <button style="flex:1;background:transparent;border:1px solid var(--error);color:var(--error);border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:500;"
-                    @onclick="DeleteCollection">Delete Collection</button>
+                    @onclick="() => _showDeleteConfirm = true">Delete Collection</button>
             @if (!_showUploader)
             {
                 <button style="flex:1;background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:500;"
@@ -264,10 +264,32 @@
     </div>
 </div>
 
+<!-- Delete confirmation modal -->
+@if (_showDeleteConfirm)
+{
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;display:flex;align-items:center;justify-content:center;"
+         @onclick="() => _showDeleteConfirm = false">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;max-width:400px;width:calc(100% - 32px);box-shadow:0 8px 32px rgba(0,0,0,0.4);"
+             @onclick:stopPropagation="true">
+            <h3 style="margin:0 0 8px;font-size:16px;font-weight:600;">Delete Collection?</h3>
+            <p style="margin:0 0 20px;font-size:13px;color:var(--text-muted);line-height:1.5;">
+                This will permanently delete <strong>@Collection.CollectionName</strong> and all its documents. This action cannot be undone.
+            </p>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:7px 16px;cursor:pointer;color:var(--text-muted);font-size:13px;"
+                        @onclick="() => _showDeleteConfirm = false">Cancel</button>
+                <button style="background:var(--error);border:none;border-radius:6px;padding:7px 16px;cursor:pointer;color:#fff;font-size:13px;font-weight:500;"
+                        @onclick="ConfirmDeleteCollection">Delete</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter, EditorRequired] public CollectionInfo Collection { get; set; } = null!;
 
     private List<DocumentInfo>? _documents;
+    private bool _showDeleteConfirm;
     private readonly List<IBrowserFile> _addFiles = [];
     private bool _uploading;
     private bool _showUploader;
@@ -479,6 +501,12 @@
         {
             NotifState.AddToast($"Failed to delete '{docName}'.", ToastSeverity.Error);
         }
+    }
+
+    private async Task ConfirmDeleteCollection()
+    {
+        _showDeleteConfirm = false;
+        await DeleteCollection();
     }
 
     private async Task DeleteCollection()

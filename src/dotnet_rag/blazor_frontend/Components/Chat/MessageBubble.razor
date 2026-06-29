@@ -20,6 +20,14 @@
             {
                 <StreamingIndicator />
             }
+            else if (!Message.IsStreaming && string.IsNullOrWhiteSpace(Message.Content) && Message.ReasoningSteps.Count > 0)
+            {
+                <div style="color:var(--text-muted);font-style:italic;">No response was generated. Check the reasoning steps below for details.</div>
+            }
+            @* else if (IsOutOfContext)
+            {
+                <div style="color:var(--text-muted);font-style:italic;">I couldn't find relevant information in the selected documents to answer this question.</div>
+            } *@
             else
             {
                 <div>@((MarkupString)RenderMarkdown(Message.Content))</div>
@@ -31,7 +39,7 @@
             <ReasoningPanel Steps="Message.ReasoningSteps" IsStreaming="Message.IsStreaming" />
         }
 
-        @if (Message.Citations.Count > 0)
+        @if (Message.Citations.Count > 0 && !IsOutOfContext)
         {
             <button class="badge accent" style="margin-top:6px;cursor:pointer;"
                     @onclick="() => OnCitationsClick.InvokeAsync(Message.Citations)">
@@ -44,6 +52,9 @@
 @code {
     [Parameter, EditorRequired] public ChatMessage Message { get; set; } = null!;
     [Parameter] public EventCallback<List<Citation>> OnCitationsClick { get; set; }
+
+    private bool IsOutOfContext =>
+        string.Equals(Message.Content?.Trim(), "OUT OF CONTEXT", StringComparison.OrdinalIgnoreCase);
 
     private static string RenderMarkdown(string? md)
     {

@@ -1,3 +1,4 @@
+using System.Text.Json;
 //using DocumentFormat.OpenXml.Drawing;
 //using DocumentFormat.OpenXml.Packaging;
 using DotnetRag.Ingestor.Models;
@@ -232,7 +233,9 @@ public sealed class IngestorService(
         {
             Message = notFound.Count == 0
                 ? $"Deleted {deleted.Count} document(s)."
-                : $"Deleted {deleted.Count} document(s); {notFound.Count} document(s) not found.",
+                : deleted.Count == 0
+                    ? $"The following document(s) do not exist in the vectorstore: {string.Join(", ", notFound)}"
+                    : $"Some documents deleted successfully. The following document(s) do not exist in the vectorstore: {string.Join(", ", notFound)}",
             TotalDocuments = deleted.Count,
             Documents = deleted.Select(name => new UploadedDocument
             {
@@ -246,8 +249,13 @@ public sealed class IngestorService(
     public CollectionListResponse GetCollections(HttpRequest request, string? vdbEndpoint)
     {
         var vectorClient = CreateVectorStoreClient(request, vdbEndpoint);
-        EnsureCatalogCollectionsFromVectorStore(vectorClient);
-        var collections = store.GetCollections().ToList();
+        var vectorCollections = LoadVectorCollectionDetails(vectorClient);
+        EnsureCatalogCollectionsFromVectorStore(vectorClient, vectorCollections);
+        var collections = store.GetCollections()
+            .Where(collection => !IsAuxiliaryCollectionName(collection.CollectionName))
+            .ToList();
+        MergeVectorCollectionDetails(collections, vectorCollections);
+
         return new CollectionListResponse
         {
             Message = "Collections listed successfully.",
@@ -390,8 +398,9 @@ public sealed class IngestorService(
                 var name = collectionName;
                 try
                 {
-                    await vectorClient.Management.DeleteCollectionAsync(name);
-                    await DeleteCollectionObjectStoreArtifactsAsync(name);
+                    DeleteOwnedCatalogCollections(name);
+                    await DeleteOwnedVectorCollectionsAsync(vectorClient, name);
+                    await DeleteOwnedObjectStoreArtifactsAsync(name);
                 }
                 catch (Exception ex)
                 {
@@ -509,7 +518,10 @@ public sealed class IngestorService(
             IngestionPipelineResult pipelineResult;
             try
             {
-                pipelineResult = await ingestionPipeline.ExtractAsync(path, name);
+                pipelineResult = await ingestionPipeline.ExtractAsync(
+                    path,
+                    name,
+                    payload.ExtractionOptions);
             }
             catch (Exception ex)
             {
@@ -591,6 +603,7 @@ public sealed class IngestorService(
             succeeded,
             isUpdate,
             vectorStoreClient,
+            payload.SplitOptions,
             extractedTextByDocument);
         await StoreCitationAssetsAsync(resolvedCollection, succeeded);
 
@@ -721,6 +734,7 @@ public sealed class IngestorService(
         IReadOnlyList<InMemoryIngestorStore.StoredDocument> documents,
         bool isUpdate,
         VectorStoreClient vectorStoreClient,
+        SplitOptions splitOptions,
         IReadOnlyDictionary<string, string> extractedTextByDocument)
     {
         await vectorStoreClient.Management.EnsureCollectionAsync(collectionName);
@@ -754,14 +768,17 @@ public sealed class IngestorService(
             }
 
             var ext = Path.GetExtension(doc.DocumentName).ToLowerInvariant();
+            var chunkSize = splitOptions.ChunkSize > 0 ? splitOptions.ChunkSize : config.ChunkSize;
+            var chunkOverlap = splitOptions.ChunkOverlap >= 0 ? splitOptions.ChunkOverlap : config.ChunkOverlap;
             var chunks = ext == ".md"
-                ? DocumentChunker.ChunkMarkdown(text, maxTokensPerParagraph: config.ChunkSize, overlapTokens: config.ChunkOverlap)
-                : DocumentChunker.ChunkText(text, maxTokensPerParagraph: config.ChunkSize, overlapTokens: config.ChunkOverlap);
+                ? DocumentChunker.ChunkMarkdown(text, maxTokensPerParagraph: chunkSize, overlapTokens: chunkOverlap)
+                : DocumentChunker.ChunkText(text, maxTokensPerParagraph: chunkSize, overlapTokens: chunkOverlap);
 
-            var baseMeta = doc.Metadata
-                .ToDictionary(kv => kv.Key, kv => kv.Value);
-            baseMeta["filename"] = doc.DocumentName;
-            baseMeta["collection_name"] = collectionName;
+            var baseMeta = BuildVectorMetadata(
+                doc.Metadata,
+                doc.DocumentInfo,
+                doc.DocumentName,
+                collectionName);
 
             for (int i = 0; i < chunks.Count; i++)
             {
@@ -788,6 +805,113 @@ public sealed class IngestorService(
                 documents.Count,
                 collectionName);
         }
+    }
+
+    public static Dictionary<string, object?> BuildVectorMetadata(
+        IReadOnlyDictionary<string, object?> documentMetadata,
+        IReadOnlyDictionary<string, object?> documentInfo,
+        string documentName,
+        string collectionName)
+    {
+        var metadata = documentMetadata.ToDictionary(kv => kv.Key, kv => kv.Value);
+        metadata["filename"] = documentName;
+        metadata["collection_name"] = collectionName;
+
+        CopyDocumentInfoField(metadata, documentInfo, "document_type", "type");
+        CopyDocumentInfoField(metadata, documentInfo, "page_number", "page_number");
+        CopyDocumentInfoField(metadata, documentInfo, "source_location", "source_location");
+        CopyDocumentInfoField(metadata, documentInfo, "stored_image_uri", "stored_image_uri");
+        CopyDocumentInfoField(metadata, documentInfo, "image_uri", "image_uri");
+        CopyDocumentInfoField(metadata, documentInfo, "asset_uri", "asset_uri");
+
+        if (!metadata.ContainsKey("source_location")
+            && TryGetFirstString(documentInfo, "asset_object_names", out var firstAssetObjectName))
+        {
+            metadata["source_location"] = firstAssetObjectName;
+            metadata["stored_image_uri"] = firstAssetObjectName;
+        }
+
+        if (!metadata.ContainsKey("content_metadata.type") && metadata.TryGetValue("type", out var type))
+        {
+            metadata["content_metadata.type"] = type;
+        }
+
+        if (!metadata.ContainsKey("content_metadata.page_number") && metadata.TryGetValue("page_number", out var pageNumber))
+        {
+            metadata["content_metadata.page_number"] = pageNumber;
+        }
+
+        if (documentInfo.TryGetValue("content_metadata", out var contentMetadata)
+            && contentMetadata is IReadOnlyDictionary<string, object?> contentMetadataDictionary)
+        {
+            foreach (var (key, value) in contentMetadataDictionary)
+            {
+                metadata[$"content_metadata.{key}"] = ToVectorMetadataValue(value);
+            }
+        }
+        else if (contentMetadata is IDictionary<string, object?> mutableContentMetadata)
+        {
+            foreach (var (key, value) in mutableContentMetadata)
+            {
+                metadata[$"content_metadata.{key}"] = ToVectorMetadataValue(value);
+            }
+        }
+
+        return metadata;
+    }
+
+    private static void CopyDocumentInfoField(
+        IDictionary<string, object?> metadata,
+        IReadOnlyDictionary<string, object?> documentInfo,
+        string sourceKey,
+        string targetKey)
+    {
+        if (metadata.ContainsKey(targetKey)
+            || !documentInfo.TryGetValue(sourceKey, out var value)
+            || value is null)
+        {
+            return;
+        }
+
+        metadata[targetKey] = ToVectorMetadataValue(value);
+    }
+
+    private static object? ToVectorMetadataValue(object? value)
+    {
+        return value switch
+        {
+            null => null,
+            string or bool or int or long or float or double or decimal => value,
+            _ => JsonSerializer.Serialize(value)
+        };
+    }
+
+    private static bool TryGetFirstString(
+        IReadOnlyDictionary<string, object?> documentInfo,
+        string key,
+        out string value)
+    {
+        value = string.Empty;
+        if (!documentInfo.TryGetValue(key, out var raw) || raw is null)
+        {
+            return false;
+        }
+
+        if (raw is IEnumerable<string> strings)
+        {
+            value = strings.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item)) ?? string.Empty;
+            return !string.IsNullOrWhiteSpace(value);
+        }
+
+        if (raw is IEnumerable<object?> objects)
+        {
+            value = objects
+                .Select(item => item?.ToString())
+                .FirstOrDefault(item => !string.IsNullOrWhiteSpace(item)) ?? string.Empty;
+            return !string.IsNullOrWhiteSpace(value);
+        }
+
+        return false;
     }
 
     private static int EstimateElementCount(string text)
@@ -849,13 +973,50 @@ public sealed class IngestorService(
         }
     }
 
-    private void EnsureCatalogCollectionsFromVectorStore(VectorStoreClient vectorClient)
+    private IReadOnlyDictionary<string, VectorStoreCollectionDetails> LoadVectorCollectionDetails(
+        VectorStoreClient vectorClient)
     {
         try
         {
+            return vectorClient.Management.ListCollectionsAsync()
+                .GetAwaiter()
+                .GetResult()
+                .Where(item => !IsAuxiliaryCollectionName(item.CollectionName))
+                .GroupBy(item => item.CollectionName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.First(),
+                    StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Vector-store collection details listing failed.");
+            return new Dictionary<string, VectorStoreCollectionDetails>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void EnsureCatalogCollectionsFromVectorStore(
+        VectorStoreClient vectorClient,
+        IReadOnlyDictionary<string, VectorStoreCollectionDetails> vectorCollections)
+    {
+        try
+        {
+            foreach (var collectionName in vectorCollections.Keys)
+            {
+                if (!store.CollectionExists(collectionName))
+                {
+                    store.CreateCollection(new CreateCollectionRequest { CollectionName = collectionName });
+                }
+            }
+
             var defaultCollection = DefaultCollectionName;
-            if (!store.CollectionExists(defaultCollection)
-                && vectorClient.Management.CollectionExistsAsync(defaultCollection).GetAwaiter().GetResult())
+            if (store.CollectionExists(defaultCollection)
+                || vectorCollections.ContainsKey(defaultCollection))
+            {
+                return;
+            }
+
+            if (vectorClient.Management.CollectionExistsAsync(defaultCollection).GetAwaiter().GetResult())
             {
                 store.CreateCollection(new CreateCollectionRequest { CollectionName = defaultCollection });
             }
@@ -863,6 +1024,79 @@ public sealed class IngestorService(
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Vector-store catalog bootstrap check failed.");
+        }
+    }
+
+    private static void MergeVectorCollectionDetails(
+        List<UploadedCollection> collections,
+        IReadOnlyDictionary<string, VectorStoreCollectionDetails> vectorCollections)
+    {
+        if (vectorCollections.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var collection in collections)
+        {
+            if (!vectorCollections.TryGetValue(collection.CollectionName, out var vectorCollection))
+            {
+                continue;
+            }
+
+            collection.NumEntities = ToInt32Count(vectorCollection.NumEntities);
+
+            if (collection.MetadataSchema.Count == 0 && vectorCollection.MetadataSchema.Count > 0)
+            {
+                collection.MetadataSchema = vectorCollection.MetadataSchema
+                    .Select(item => item.ToDictionary(kv => kv.Key, kv => kv.Value))
+                    .ToList();
+            }
+
+            foreach (var item in vectorCollection.CollectionInfo)
+            {
+                collection.CollectionInfo.TryAdd(item.Key, item.Value);
+            }
+        }
+    }
+
+    private static int ToInt32Count(long value) =>
+        value > int.MaxValue
+            ? int.MaxValue
+            : value < 0
+                ? 0
+                : (int)value;
+
+    private async Task DeleteOwnedVectorCollectionsAsync(
+        VectorStoreClient vectorClient,
+        string collectionName)
+    {
+        await vectorClient.Management.DeleteCollectionAsync(collectionName);
+
+        foreach (var auxiliaryCollection in GetAuxiliaryCollectionNames(collectionName))
+        {
+            try
+            {
+                if (await vectorClient.Management.CollectionExistsAsync(auxiliaryCollection))
+                {
+                    await vectorClient.Management.DeleteCollectionAsync(auxiliaryCollection);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Vector-store delete failed for auxiliary collection '{Collection}' owned by '{OwnerCollection}'",
+                    auxiliaryCollection,
+                    collectionName);
+            }
+        }
+    }
+
+    private void DeleteOwnedCatalogCollections(string collectionName)
+    {
+        foreach (var auxiliaryCollection in GetAuxiliaryCollectionNames(collectionName))
+        {
+            store.DeleteCollection(auxiliaryCollection);
         }
     }
 
@@ -928,6 +1162,28 @@ public sealed class IngestorService(
         }
     }
 
+    private async Task DeleteOwnedObjectStoreArtifactsAsync(string collectionName)
+    {
+        await DeleteCollectionObjectStoreArtifactsAsync(collectionName);
+        foreach (var auxiliaryCollection in GetAuxiliaryCollectionNames(collectionName))
+        {
+            await DeleteCollectionObjectStoreArtifactsAsync(auxiliaryCollection);
+        }
+    }
+
+    private static IReadOnlyList<string> GetAuxiliaryCollectionNames(string collectionName)
+    {
+        if (IsAuxiliaryCollectionName(collectionName))
+        {
+            return [];
+        }
+
+        return [$"summary_{collectionName}"];
+    }
+
+    private static bool IsAuxiliaryCollectionName(string collectionName) =>
+        collectionName.StartsWith("summary_", StringComparison.OrdinalIgnoreCase);
+
     private async Task DeleteCollectionObjectStoreArtifactsAsync(string collectionName)
     {
         if (!objectStore.IsEnabled)
@@ -937,9 +1193,6 @@ public sealed class IngestorService(
 
         var citationObjects = await objectStore.ListAsync(collectionName, string.Empty);
         await objectStore.DeleteAsync(collectionName, citationObjects);
-
-        var summaryObjects = await objectStore.ListAsync($"summary_{collectionName}", string.Empty);
-        await objectStore.DeleteAsync($"summary_{collectionName}", summaryObjects);
     }
 
     // ── Summarization helpers ─────────────────────────────────────────────────

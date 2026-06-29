@@ -38,27 +38,51 @@ public sealed class OllamaEmbeddingService : IEmbeddingService
         string text,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _logger.LogWarning("EmbedAsync called with empty text; skipping Ollama call and returning empty embedding.");
+            return [];
+        }
+
         var payload = new { model = _model, input = text };
         var json = JsonSerializer.Serialize(payload, JsonOpts);
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
         var response = await _http.PostAsync(_endpoint, content, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError(
                 "Ollama /api/embed call failed ({StatusCode}): {Body}",
                 (int)response.StatusCode,
-                body);
+                responseBody);
             response.EnsureSuccessStatusCode();
         }
 
-        var root = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        var embeddings = root?["embeddings"]?.AsArray();
-        if (embeddings is not null && embeddings.Count > 0 && embeddings[0] is JsonArray firstEmbedding)
+        var root = JsonNode.Parse(responseBody);
+
+        // Ollama sometimes returns {"error": "..."} with a 200 status when the model is missing or busy.
+        var errorMsg = root?["error"]?.GetValue<string>();
+        if (!string.IsNullOrWhiteSpace(errorMsg))
         {
-            return firstEmbedding.Select(n => n?.GetValue<float>() ?? 0f).ToList();
+            throw new InvalidOperationException($"Ollama /api/embed returned an error: {errorMsg}");
+        }
+
+        var embeddings = root?["embeddings"]?.AsArray();
+        if (embeddings is not null && embeddings.Count > 0)
+        {
+            // Standard shape: {"embeddings": [[0.1, 0.2, ...]]}
+            if (embeddings[0] is JsonArray firstEmbedding)
+            {
+                return firstEmbedding.Select(n => n?.GetValue<float>() ?? 0f).ToList();
+            }
+
+            // Flat shape fallback: {"embeddings": [0.1, 0.2, ...]} — seen with some Ollama builds or proxies.
+            if (embeddings[0] is JsonValue)
+            {
+                return embeddings.Select(n => n?.GetValue<float>() ?? 0f).ToList();
+            }
         }
 
         // Keep accepting the legacy /api/embeddings response shape if an older server or proxy returns it.
@@ -68,6 +92,12 @@ public sealed class OllamaEmbeddingService : IEmbeddingService
             return legacyEmbedding.Select(n => n?.GetValue<float>() ?? 0f).ToList();
         }
 
-        throw new InvalidOperationException("Ollama /api/embed did not return an 'embeddings' array.");
+        _logger.LogError(
+            "Ollama /api/embed returned an unrecognised shape. Model={Model} Endpoint={Endpoint} Body={Body}",
+            _model,
+            _endpoint,
+            responseBody);
+        throw new InvalidOperationException(
+            $"Ollama /api/embed did not return a recognised 'embeddings' array. Model={_model} Endpoint={_endpoint}. See logs for the raw response.");
     }
 }

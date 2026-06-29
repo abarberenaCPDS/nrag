@@ -1,5 +1,6 @@
 using DotnetRag.Shared.Abstractions;
 using DotnetRag.Shared.Configuration;
+using DotnetRag.Shared.Prompts;
 using DotnetRag.Shared.Summarization.Strategies;
 using Microsoft.Extensions.Logging;
 
@@ -14,6 +15,7 @@ public sealed class SummarizationService(
     IVectorDocumentLookup documentLookup,
     IObjectStore objectStore,
     RagServerConfiguration config,
+    PromptCatalog promptCatalog,
     SummarizationRateLimiter rateLimiter,
     SummaryProgressTracker progressTracker,
     ILogger<SummarizationService> logger) : ISummarizationService
@@ -28,7 +30,7 @@ public sealed class SummarizationService(
         CancellationToken cancellationToken = default)
     {
         options ??= new SummarizationOptions();
-        var prompts = SummarizationPrompts.Load(config.Prompt_Config_File);
+        var prompts = SummarizationPrompts.FromCatalog(promptCatalog);
         var started = DateTime.UtcNow;
 
         logger.LogInformation(

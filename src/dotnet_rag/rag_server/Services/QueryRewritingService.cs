@@ -1,6 +1,9 @@
+using System.Diagnostics;
+using DotnetRag.Rag.Observability;
 using DotnetRag.Shared.Abstractions;
 using DotnetRag.Shared.Configuration;
 using DotnetRag.Shared.Models;
+using DotnetRag.Shared.Prompts;
 
 namespace DotnetRag.Rag.Services;
 
@@ -10,51 +13,68 @@ namespace DotnetRag.Rag.Services;
 public sealed class QueryRewritingService(
     IChatCompletionService chatService,
     RagServerConfiguration config,
+    PromptCatalog prompts,
     ILogger<QueryRewritingService> logger)
 {
-    private const string SystemPrompt =
-        "Given a chat history and the latest user question which might reference context " +
-        "in the chat history, formulate a standalone question which can be understood " +
-        "without the chat history. Do NOT answer the question, just reformulate it if needed " +
-        "and otherwise return it as is. Return only the reformulated question, no explanation.";
-
     // Returns the rewritten query, or the original query if rewriting is not
     // applicable (no history, or rewriting disabled).
     public async Task<string> RewriteAsync(
         string query,
         IReadOnlyList<Message> conversationHistory,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? modelOverride = null)
     {
         if (conversationHistory.Count == 0 || config.ConversationHistory == 0)
         {
             return query;
         }
 
-        var messages = new List<ChatMessage> { new("system", SystemPrompt) };
-
         // Include the last N turns of history (excluding the current message)
         var historyWindow = config.ConversationHistory > 0
             ? conversationHistory.SkipLast(1).TakeLast(config.ConversationHistory).ToList()
             : conversationHistory.SkipLast(1).ToList();
 
-        foreach (var msg in historyWindow)
+        var chatHistory = string.Join("\n", historyWindow.Select(msg =>
         {
             var text = msg.Content is string s ? s : msg.Content?.ToString() ?? string.Empty;
-            messages.Add(new ChatMessage(msg.Role, text));
-        }
+            return $"{msg.Role}: {text}";
+        }));
 
-        messages.Add(new ChatMessage("human", query));
+        var prompt = prompts.QueryRewriterPrompt;
+        var messages = new List<ChatMessage>
+        {
+            new("system", PromptCatalog.Render(prompt.System, new Dictionary<string, string?>
+            {
+                ["chat_history"] = chatHistory,
+                ["input"] = query
+            })),
+            new("human", PromptCatalog.Render(prompt.Human, new Dictionary<string, string?>
+            {
+                ["chat_history"] = chatHistory,
+                ["input"] = query
+            }))
+        };
+
 
         var request = new ChatCompletionRequest(
-            Model: config.LlmModel,
+            Model: string.IsNullOrWhiteSpace(modelOverride)
+                ? config.QueryRewriterModelOrDefault
+                : modelOverride,
             Messages: messages,
             Temperature: 0.0,
             TopP: 0.1,
             MaxTokens: 256);
 
+        using var activity = RagMetrics.ActivitySource.StartActivity("rag.Query Rewriting.token_usage");
+        activity?.SetTag("rag.prompt.template", "query_rewriter_prompt");
+        activity?.SetTag("rag.prompt.message_count", messages.Count);
+        activity?.SetTag("rag.query_rewriting.history_message_count", historyWindow.Count);
+        activity?.SetTag("gen_ai.request.model", request.Model);
+
         try
         {
             var response = await chatService.CompleteAsync(request, cancellationToken);
+            RagTraceAttributes.SetLlmUsageTags(activity, response.Usage);
             var rewritten = response.Content?.Trim();
 
             if (string.IsNullOrEmpty(rewritten))
@@ -71,6 +91,7 @@ public sealed class QueryRewritingService(
         }
         catch (Exception ex)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             logger.LogWarning(ex, "Query rewriting failed; using original query.");
             return query;
         }

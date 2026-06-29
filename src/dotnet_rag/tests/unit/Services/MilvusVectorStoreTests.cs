@@ -149,6 +149,40 @@ public sealed class MilvusVectorStoreTests
     }
 
     [Fact]
+    public async Task DeleteDocumentsAsync_UsesPythonSourceId_WhenMetadataFieldIsAbsent()
+    {
+        var handler = new RecordingHandler(
+            PythonSchemaResponse,
+            """{"code":0,"data":{"deleteCount":2}}""");
+        var store = CreateStore(handler);
+
+        await store.DeleteDocumentsAsync("docs", ["deck.pdf"]);
+
+        handler.Requests.Select(item => item.RequestUri!.AbsolutePath).Should().Equal(
+            "/v2/vectordb/collections/describe",
+            "/v2/vectordb/entities/delete");
+        using var body = JsonDocument.Parse(handler.RequestBodies[1]);
+        body.RootElement.GetProperty("collectionName").GetString().Should().Be("docs");
+        body.RootElement.GetProperty("filter").GetString()
+            .Should().Be("source[\"source_id\"] == \"deck.pdf\"");
+    }
+
+    [Fact]
+    public async Task CompactCollectionAsync_PostsCompactRequest_AndSwallowsMilvusFailure()
+    {
+        var handler = new RecordingHandler("""{"code":999,"message":"compact unavailable"}""");
+        var store = CreateStore(handler);
+
+        await store.CompactCollectionAsync("docs");
+
+        handler.Requests.Should().ContainSingle();
+        handler.Requests[0].RequestUri!.AbsolutePath.Should()
+            .Be("/v2/vectordb/collections/compact");
+        using var body = JsonDocument.Parse(handler.RequestBodies[0]);
+        body.RootElement.GetProperty("collectionName").GetString().Should().Be("docs");
+    }
+
+    [Fact]
     public async Task GetDocumentTextByIdAsync_QueriesMilvusById()
     {
         var handler = new RecordingHandler(
@@ -169,6 +203,128 @@ public sealed class MilvusVectorStoreTests
         root.GetProperty("collectionName").GetString().Should().Be("summary_docs");
         root.GetProperty("filter").GetString().Should().Be("id == \"summary_file.txt\"");
         root.GetProperty("outputFields")[0].GetString().Should().Be("text");
+    }
+
+    [Fact]
+    public async Task ListDocumentNamesAsync_UsesMetadataFilename_WhenMetadataFieldExists()
+    {
+        var handler = new RecordingHandler(
+            FullSchemaResponse,
+            FullSchemaResponse,
+            """{"code":0,"data":[{"metadata":{"filename":"a.pdf"}},{"metadata":{"filename":"a.pdf"}},{"metadata":{"filename":"b.pdf"}}]}""");
+        var store = CreateStore(handler);
+
+        var names = await store.ListDocumentNamesAsync("docs");
+
+        names.Should().Equal("a.pdf", "b.pdf");
+        using var body = JsonDocument.Parse(handler.RequestBodies[2]);
+        body.RootElement.GetProperty("outputFields")[0].GetString().Should().Be("metadata");
+    }
+
+    [Fact]
+    public async Task ListDocumentNamesAsync_UsesPythonSourceId_WhenMetadataFieldIsAbsent()
+    {
+        var handler = new RecordingHandler(
+            PythonSchemaResponse,
+            PythonSchemaResponse,
+            """{"code":0,"data":[{"source":{"source_id":"deck.pdf"}},{"source":{"source_id":"deck.pdf"}}]}""");
+        var store = CreateStore(handler);
+
+        var names = await store.ListDocumentNamesAsync("docs");
+
+        names.Should().ContainSingle().Which.Should().Be("deck.pdf");
+        using var body = JsonDocument.Parse(handler.RequestBodies[2]);
+        body.RootElement.GetProperty("outputFields")[0].GetString().Should().Be("source");
+    }
+
+    [Fact]
+    public async Task ListDocumentNamesAsync_FallsBackToChunkIdPrefix_WhenOnlyIdFieldExists()
+    {
+        var handler = new RecordingHandler(
+            IdOnlySchemaResponse,
+            IdOnlySchemaResponse,
+            """{"code":0,"data":[{"id":"report.pdf__chunk_0"},{"id":"report.pdf__chunk_1"}]}""");
+        var store = CreateStore(handler);
+
+        var names = await store.ListDocumentNamesAsync("docs");
+
+        names.Should().ContainSingle().Which.Should().Be("report.pdf");
+        using var body = JsonDocument.Parse(handler.RequestBodies[2]);
+        body.RootElement.GetProperty("outputFields")[0].GetString().Should().Be("id");
+    }
+
+    [Fact]
+    public async Task SearchAsync_ParsesDirectAndNestedMilvusRows()
+    {
+        var handler = new RecordingHandler(
+            PythonSchemaResponse,
+            """
+            {"code":0,"data":[
+              [{"id":1,"distance":0.87,"entity":{"text":"nested text","source":{"source_id":"deck.pdf"},"content_metadata":{"page_number":2}}}],
+              {"id":"direct-id","score":0.75,"text":"direct text","source":{"source_id":"direct.pdf"}}
+            ]}
+            """);
+        var store = CreateStore(handler);
+
+        var results = await store.SearchAsync("docs", "query", 5);
+
+        results.Should().HaveCount(2);
+        results[0].Id.Should().Be("1");
+        results[0].Text.Should().Be("nested text");
+        results[0].Score.Should().Be(0.87);
+        results[0].Metadata.Should().NotBeNull();
+        results[0].Metadata!["source.source_id"].Should().Be("\"deck.pdf\"");
+        results[0].Metadata!["content_metadata.page_number"].Should().Be("2");
+        results[1].Id.Should().Be("direct-id");
+        results[1].Text.Should().Be("direct text");
+        results[1].Score.Should().Be(0.75);
+    }
+
+    [Fact]
+    public async Task ListCollectionsAsync_AggregatesPythonMetadataSchemaAndDocumentInfo()
+    {
+        var handler = new RecordingHandler(
+            """{"code":0,"data":["docs","metadata_schema","document_info","archive"]}""",
+            """
+            {"code":0,"data":[
+              {"collection_name":"docs","metadata_schema":[{"name":"year","type":"int"}]},
+              {"collection_name":"archive","metadata_schema":[{"name":"region","type":"str"}]}
+            ]}
+            """,
+            """
+            {"code":0,"data":[
+              {"collection_name":"docs","info_type":"collection","info_value":{"document_count":2}},
+              {"collection_name":"docs","info_type":"catalog","info_value":{"summary":"annual reports"}},
+              {"collection_name":"archive","info_type":"catalog","info_value":{"summary":"old docs"}}
+            ]}
+            """,
+            """{"code":0,"data":{"row_count":"12"}}""",
+            """{"code":0,"data":{"row_count":3}}""");
+        var store = CreateStore(handler);
+
+        var collections = await store.ListCollectionsAsync();
+
+        collections.Select(item => item.CollectionName).Should().Equal("docs", "archive");
+        collections[0].NumEntities.Should().Be(12);
+        collections[0].MetadataSchema.Should().ContainSingle()
+            .Which["name"].Should().Be("year");
+        collections[0].CollectionInfo["document_count"].Should().Be(2L);
+        collections[0].CollectionInfo["summary"].Should().Be("annual reports");
+        collections[1].NumEntities.Should().Be(3);
+        collections[1].MetadataSchema.Should().ContainSingle()
+            .Which["name"].Should().Be("region");
+
+        handler.Requests.Select(item => item.RequestUri!.AbsolutePath).Should().Equal(
+            "/v2/vectordb/collections/list",
+            "/v2/vectordb/entities/query",
+            "/v2/vectordb/entities/query",
+            "/v2/vectordb/collections/get_stats",
+            "/v2/vectordb/collections/get_stats");
+        handler.RequestBodies[1].Should().Contain("\"collectionName\":\"metadata_schema\"");
+        handler.RequestBodies[2].Should().Contain("\"collectionName\":\"document_info\"");
+        using var infoBody = JsonDocument.Parse(handler.RequestBodies[2]);
+        infoBody.RootElement.GetProperty("filter").GetString()
+            .Should().Be("info_type == 'catalog' or info_type == 'collection'");
     }
 
     private static MilvusVectorStore CreateStore(
@@ -204,6 +360,15 @@ public sealed class MilvusVectorStoreTests
           {"fieldName":"source"},
           {"fieldName":"content_metadata"},
           {"fieldName":"metadata"}
+        ]}}
+        """;
+
+    private const string IdOnlySchemaResponse =
+        """
+        {"code":0,"data":{"fields":[
+          {"fieldName":"id"},
+          {"fieldName":"text"},
+          {"fieldName":"vector"}
         ]}}
         """;
 

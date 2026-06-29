@@ -1,5 +1,11 @@
 namespace DotnetRag.Shared.Abstractions;
 
+public sealed record VectorStoreCollectionDetails(
+    string CollectionName,
+    long NumEntities,
+    IReadOnlyList<IReadOnlyDictionary<string, object?>> MetadataSchema,
+    IReadOnlyDictionary<string, object?> CollectionInfo);
+
 public interface IVectorStoreManagement
 {
     Task EnsureCollectionAsync(
@@ -25,6 +31,10 @@ public interface IVectorStoreManagement
 
     Task<bool> CheckHealthAsync(
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<VectorStoreCollectionDetails>> ListCollectionsAsync(
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<VectorStoreCollectionDetails>>([]);
 
     Task CompactCollectionAsync(
         string collectionName,

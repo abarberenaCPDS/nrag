@@ -1,3 +1,5 @@
+using DotnetRag.Ingestor.Models;
+
 namespace DotnetRag.Ingestor.Services;
 
 public sealed record IngestionPipelineResult(
@@ -19,9 +21,12 @@ public interface IIngestionPipeline
     async Task<IngestionPipelineResult> ExtractAsync(
         string path,
         string filename,
+        ExtractionOptions? extractionOptions = null,
         CancellationToken cancellationToken = default)
     {
-        var text = await ExtractTextAsync(path, filename, cancellationToken);
+        var text = extractionOptions?.ExtractText == false
+            ? string.Empty
+            : await ExtractTextAsync(path, filename, cancellationToken);
         return new IngestionPipelineResult(text, new Dictionary<string, object?>(), []);
     }
 

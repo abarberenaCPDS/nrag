@@ -19,7 +19,9 @@
 @if (_open)
 {
     <div style="position:fixed;inset:0;z-index:9998;" @onclick="Close"></div>
-    <div class="ntf-panel" style="position:fixed;top:60px;right:8px;width:400px;max-height:520px;overflow-y:auto;z-index:9999;" @onclick:stopPropagation="true">
+    <div class="ntf-panel" tabindex="-1" @ref="_panelRef"
+         style="position:fixed;top:60px;right:8px;width:400px;max-height:520px;overflow-y:auto;z-index:9999;outline:none;"
+         @onclick:stopPropagation="true" @onkeydown="HandlePanelKeyDown">
         <div class="ntf-header">
             <span style="font-size:18px;font-weight:600;">Notifications</span>
             <button class="ntf-clear-btn" @onclick="ClearAll" title="Clear All">
@@ -107,6 +109,8 @@
 
 @code {
     private bool _open;
+    private bool _needsFocus;
+    private ElementReference _panelRef;
     private System.Threading.Timer? _pollTimer;
 
     protected override void OnInitialized()
@@ -115,9 +119,27 @@
         _pollTimer = new System.Threading.Timer(PollPendingTasks, null, 5000, 5000);
     }
 
-    private void TogglePanel() => _open = !_open;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_needsFocus)
+        {
+            _needsFocus = false;
+            try { await _panelRef.FocusAsync(); } catch { }
+        }
+    }
+
+    private void TogglePanel()
+    {
+        _open = !_open;
+        if (_open) _needsFocus = true;
+    }
 
     private void Close() => _open = false;
+
+    private void HandlePanelKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") Close();
+    }
 
     private void ClearAll()
     {
